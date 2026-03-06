@@ -4,20 +4,22 @@ const GLOBALS = {
   NodeCache: new Map(),
   NodeHostIndexCache: new Map(),
   NodeHostIndexInflight: new Map(),
-  NodeListCache: new Map(),      // 新增：节点列表缓存
-  NodeListInflight: new Map(),   // 新增：节点列表并发去重
+  NodeListCache: new Map(), // 新增：节点列表缓存
+  NodeListInflight: new Map(), // 新增：节点列表并发去重
   Regex: {
-    StaticExt: /\.(?:jpg|jpeg|gif|png|svg|ico|webp|js|css|woff2?|ttf|otf|map|webmanifest|srt|ass|vtt|sub)$/i,
+    StaticExt:
+      /\.(?:jpg|jpeg|gif|png|svg|ico|webp|js|css|woff2?|ttf|otf|map|webmanifest|srt|ass|vtt|sub)$/i,
     EmbyImages: /(?:\/Images\/|\/Icons\/|\/Branding\/|\/emby\/covers\/)/i,
-    Streaming: /\.(?:mp4|m4v|m4s|m4a|ogv|webm|mkv|mov|avi|wmv|flv|ts|m3u8|mpd)$/i
-  }
+    Streaming:
+      /\.(?:mp4|m4v|m4s|m4a|ogv|webm|mkv|mov|avi|wmv|flv|ts|m3u8|mpd)$/i,
+  },
 };
 const Config = {
   Defaults: {
     CacheTTL: 8000,
     ListCacheTTL: 15000, // 新增：列表缓存15秒（可改30000）
-    MaxRetryBodyBytes: 8 * 1024 * 1024 // 8MB，超过不做协议回退重试
-  }
+    MaxRetryBodyBytes: 8 * 1024 * 1024, // 8MB，超过不做协议回退重试
+  },
 };
 function getKV(env) {
   const db = env.EMBY_D1 || env.D1 || env.DB;
@@ -25,58 +27,78 @@ function getKV(env) {
 
   return {
     async get(key, opts = {}) {
-      const row = await db.prepare("SELECT v FROM proxy_kv WHERE k = ?1").bind(String(key)).first();
+      const row = await db
+        .prepare("SELECT v FROM proxy_kv WHERE k = ?1")
+        .bind(String(key))
+        .first();
       if (!row) return null;
       const val = row.v;
 
       if (opts && opts.type === "json") {
-        try { return JSON.parse(val); } catch { return null; }
+        try {
+          return JSON.parse(val);
+        } catch {
+          return null;
+        }
       }
       return val;
     },
 
     async put(key, value) {
       const k = String(key);
-      const v = (typeof value === "string") ? value : JSON.stringify(value);
+      const v = typeof value === "string" ? value : JSON.stringify(value);
       const now = Date.now();
 
-      await db.prepare(`
+      await db
+        .prepare(
+          `
         INSERT INTO proxy_kv (k, v, updated_at)
         VALUES (?1, ?2, ?3)
         ON CONFLICT(k) DO UPDATE SET
           v = excluded.v,
           updated_at = excluded.updated_at
-      `).bind(k, v, now).run();
+      `,
+        )
+        .bind(k, v, now)
+        .run();
     },
 
     async delete(key) {
-      await db.prepare("DELETE FROM proxy_kv WHERE k = ?1").bind(String(key)).run();
+      await db
+        .prepare("DELETE FROM proxy_kv WHERE k = ?1")
+        .bind(String(key))
+        .run();
     },
-// 兼容 KV.list({ prefix, cursor, limit })
-async list(opts = {}) {
-  const o = /** @type {any} */ (opts || {});
-  const p = String(o.prefix || "");
-  const off = Number(o.cursor || 0) || 0;
-  const lim = Math.max(1, Math.min(Number(o.limit || 1000), 1000));
+    // 兼容 KV.list({ prefix, cursor, limit })
+    async list(opts = {}) {
+      const o = /** @type {any} */ (opts || {});
+      const p = String(o.prefix || "");
+      const off = Number(o.cursor || 0) || 0;
+      const lim = Math.max(1, Math.min(Number(o.limit || 1000), 1000));
 
-  const rows = await db.prepare(`
+      const rows = await db
+        .prepare(
+          `
     SELECT k
     FROM proxy_kv
     WHERE k LIKE ?1
     ORDER BY k
     LIMIT ?2 OFFSET ?3
-  `).bind(p + "%", lim + 1, off).all();
+  `,
+        )
+        .bind(p + "%", lim + 1, off)
+        .all();
 
-  const arr = Array.isArray(rows?.results) ? rows.results : [];
-  const hasMore = arr.length > lim;
-  const slice = hasMore ? arr.slice(0, lim) : arr;
+      const arr = Array.isArray(rows?.results) ? rows.results : [];
+      const hasMore = arr.length > lim;
+      const slice = hasMore ? arr.slice(0, lim) : arr;
 
-  return {
-    keys: slice.map(r => ({ name: r.k })),
-    list_complete: !hasMore,
-    cursor: hasMore ? String(off + lim) : undefined
-  };
-}
+      return {
+        keys: slice.map((r) => ({ name: r.k })),
+        list_complete: !hasMore,
+        cursor: hasMore ? String(off + lim) : undefined,
+      };
+    },
   };
 }
 function safeEqual(a, b) {
@@ -102,8 +124,8 @@ const Auth = {
       role: "",
       response: new Response(JSON.stringify({ error: "UNAUTHORIZED" }), {
         status: 401,
-        headers: { "Content-Type": "application/json;charset=utf-8" }
-      })
+        headers: { "Content-Type": "application/json;charset=utf-8" },
+      }),
     };
   },
 
@@ -117,7 +139,7 @@ const Auth = {
     }
 
     return this.unauthorized();
-  }
+  },
 };
 
 const Validators = {
@@ -125,13 +147,18 @@ const Validators = {
   SECRET_RE: /^[^\/?#\s]{0,128}$/,
 
   normalizeName(v) {
-    return String(v || "").trim().toLowerCase();
+    return String(v || "")
+      .trim()
+      .toLowerCase();
   },
 
   validateName(v) {
     const name = this.normalizeName(v);
     if (!this.NAME_RE.test(name)) {
-      return { ok: false, error: "name 非法：仅允许 a-z / 0-9 / _ / -，长度 1~32" };
+      return {
+        ok: false,
+        error: "name 非法：仅允许 a-z / 0-9 / _ / -，长度 1~32",
+      };
     }
     return { ok: true, value: name };
   },
@@ -140,28 +167,35 @@ const Validators = {
     const target = String(v || "").trim();
     if (!target) return { ok: false, error: "target 不能为空" };
     if (target.length > 2048) return { ok: false, error: "target 过长" };
-try {
-  const u = new URL(target);
-  if (!/^https?:$/i.test(u.protocol)) return { ok: false, error: "target 只允许 http/https" };
+    try {
+      const u = new URL(target);
+      if (!/^https?:$/i.test(u.protocol))
+        return { ok: false, error: "target 只允许 http/https" };
 
-  // 不用 u.toString()，否则默认端口会被自动去掉（:80/:443）
-  const value = target.replace(/\/+$/, ""); // 仅去掉末尾 /
-  return { ok: true, value };
-} catch {
-  return { ok: false, error: "target 不是合法 URL" };
-}
+      // 不用 u.toString()，否则默认端口会被自动去掉（:80/:443）
+      const value = target.replace(/\/+$/, ""); // 仅去掉末尾 /
+      return { ok: true, value };
+    } catch {
+      return { ok: false, error: "target 不是合法 URL" };
+    }
   },
   validateMode(v) {
-    const m = String(v || "").trim().toLowerCase();
-    if (!m) return { ok: true, value: "normal" };
-    if (m !== "normal" && m !== "split") return { ok: false, error: "mode 仅支持 normal/split" };
-    return { ok: true, value: m };
+    const m = String(v || "")
+      .trim()
+      .toLowerCase();
+    // 兼容老入参，但统一落为 split（反代）
+    if (m && m !== "normal" && m !== "split") {
+      return { ok: false, error: "mode 仅支持 normal/split" };
+    }
+    return { ok: true, value: "split" };
   },
-
   validateSecret(v) {
     const secret = String(v || "").trim();
     if (!this.SECRET_RE.test(secret)) {
-      return { ok: false, error: "secret 非法：不能包含 / ? # 或空白字符，最长128" };
+      return {
+        ok: false,
+        error: "secret 非法：不能包含 / ? # 或空白字符，最长128",
+      };
     }
     return { ok: true, value: secret };
   },
@@ -177,6 +211,13 @@ try {
     if (note.length > 64) note = note.slice(0, 64);
     return { ok: true, value: note };
   },
+  validateDisplayName(v) {
+    let name = String(v || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    if (name.length > 32) name = name.slice(0, 32);
+    return { ok: true, value: name };
+  },
   validateNodeInput(n) {
     if (!n || typeof n !== "object" || Array.isArray(n)) {
       return { ok: false, error: "节点项不是对象" };
@@ -191,37 +232,41 @@ try {
     const rm = this.validateMode(n.mode);
     if (!rm.ok) return { ok: false, error: rm.error };
 
-   // 统一禁用推流地址：split 也不使用 streamTarget
-const streamTarget = "";
+    // 统一禁用推流地址：split 也不使用 streamTarget
+    const streamTarget = "";
+
     const rs = this.validateSecret(n.secret || "");
     if (!rs.ok) return { ok: false, error: rs.error };
 
     const rg = this.validateTag(n.tag || "");
     const rn2 = this.validateNote(n.note || "");
+    const rd = this.validateDisplayName(n.displayName || "");
 
     return {
       ok: true,
-value: {
-  name: rn.value,
-  target: rt.value,
-  mode: rm.value,
-  streamTarget,
-  fav: !!n.fav,
-  rank: Number.isFinite(Number(n.rank)) ? Number(n.rank) : undefined,
-  secret: rs.value,
-  tag: rg.value,
-  note: rn2.value
-}
+      value: {
+        name: rn.value,
+        displayName: rd.value,
+        target: rt.value,
+        mode: rm.value,
+        streamTarget,
+        fav: !!n.fav,
+        rank: Number.isFinite(Number(n.rank)) ? Number(n.rank) : undefined,
+        secret: rs.value,
+        tag: rg.value,
+        note: rn2.value,
+      },
     };
-  }
-
+  },
 };
 
 const Database = {
   PREFIX: "node:",
   // 标准前缀方法
   nodePrefix(uid = "admin") {
-    uid = String(uid || "admin").trim().toLowerCase();
+    uid = String(uid || "admin")
+      .trim()
+      .toLowerCase();
     return "u:" + uid + ":" + this.PREFIX; // u:admin:node:
   },
   // 兼容旧调用
@@ -233,27 +278,35 @@ const Database = {
   },
   // 关键：你缺的就是这个
   memKey(uid, name) {
-    return String(uid || "admin").toLowerCase() + ":" + String(name || "").toLowerCase();
+    return (
+      String(uid || "admin").toLowerCase() +
+      ":" +
+      String(name || "").toLowerCase()
+    );
   },
   listCacheKey(uid = "admin") {
     return "list:" + String(uid || "admin").toLowerCase();
   },
   cacheUrl(uid, name) {
-    return "https://internal-cache/node/" +
-      encodeURIComponent(String(uid || "admin").toLowerCase()) + "/" +
-      encodeURIComponent(String(name || "").toLowerCase());
+    return (
+      "https://internal-cache/node/" +
+      encodeURIComponent(String(uid || "admin").toLowerCase()) +
+      "/" +
+      encodeURIComponent(String(name || "").toLowerCase())
+    );
   },
   getKV(env) {
     return getKV(env);
   },
   packNode(n) {
-const o = { t: String(n?.target || "").trim() };
-if (n?.mode && n.mode !== "normal") o.m = String(n.mode);
-if (n?.fav) o.f = 1;
-if (Number.isFinite(Number(n?.rank))) o.r = Number(n.rank);
-if (n?.secret) o.s = String(n.secret);
-if (n?.tag)    o.g = String(n.tag);
-if (n?.note)   o.n = String(n.note);
+    const o = { t: String(n?.target || "").trim() };
+    if (n?.mode && n.mode !== "normal") o.m = String(n.mode);
+    if (n?.fav) o.f = 1;
+    if (Number.isFinite(Number(n?.rank))) o.r = Number(n.rank);
+    if (n?.secret) o.s = String(n.secret);
+    if (n?.tag) o.g = String(n.tag);
+    if (n?.note) o.n = String(n.note);
+    if (n?.displayName) o.d = String(n.displayName); // 新增
     return JSON.stringify(o);
   },
 
@@ -263,21 +316,26 @@ if (n?.note)   o.n = String(n.note);
     const target = String(raw.t ?? raw.target ?? "").trim();
     if (!target) return null;
 
-    const mode = String(raw.m ?? raw.mode ?? "normal").toLowerCase();
+    // 历史数据统一按反代模式运行
+    const mode = "split";
     const streamTarget = "";
     return {
-  name: String(name || "").trim().toLowerCase(),
-  target,
-  mode: mode === "split" ? "split" : "normal",
-  streamTarget,
-  fav: !!(raw.f ?? raw.fav ?? false),
-  rank: Number.isFinite(Number(raw.r ?? raw.rank)) ? Number(raw.r ?? raw.rank) : undefined,
-  secret: String(raw.s ?? raw.secret ?? ""),
-  tag: String(raw.g ?? raw.tag ?? ""),
-  note: String(raw.n ?? raw.note ?? "")
-};
+      name: String(name || "")
+        .trim()
+        .toLowerCase(),
+      displayName: String(raw.d ?? raw.displayName ?? ""), // 新增（兼容旧格式）
+      target,
+      mode,
+      streamTarget,
+      fav: !!(raw.f ?? raw.fav ?? false),
+      rank: Number.isFinite(Number(raw.r ?? raw.rank))
+        ? Number(raw.r ?? raw.rank)
+        : undefined,
+      secret: String(raw.s ?? raw.secret ?? ""),
+      tag: String(raw.g ?? raw.tag ?? ""),
+      note: String(raw.n ?? raw.note ?? ""),
+    };
   },
-
   async getNode(nodeName, env, ctx, uid = "admin") {
     nodeName = String(nodeName || "").toLowerCase();
     uid = String(uid || "admin").toLowerCase();
@@ -302,138 +360,156 @@ if (n?.note)   o.n = String(n.note);
     const raw = await kv.get(this.nodeKey(uid, nodeName), { type: "json" });
     const nodeData = this.unpackNode(nodeName, raw);
     if (nodeData) {
-  const putPromise = cache.put(
-    cacheUrl,
-    new Response(JSON.stringify(nodeData), {
-      headers: { "Cache-Control": "public, max-age=5, stale-while-revalidate=30" }
-    })
-  );
+      const putPromise = cache.put(
+        cacheUrl,
+        new Response(JSON.stringify(nodeData), {
+          headers: {
+            "Cache-Control": "public, max-age=5, stale-while-revalidate=30",
+          },
+        }),
+      );
 
-  if (ctx && typeof ctx.waitUntil === "function") {
-    ctx.waitUntil(putPromise);
-  } else {
-    putPromise.catch(() => {});
-  }
+      if (ctx && typeof ctx.waitUntil === "function") {
+        ctx.waitUntil(putPromise);
+      } else {
+        putPromise.catch(() => {});
+      }
 
-  GLOBALS.NodeCache.set(mk, { data: nodeData, exp: now + Config.Defaults.CacheTTL });
-  return nodeData;
-}
+      GLOBALS.NodeCache.set(mk, {
+        data: nodeData,
+        exp: now + Config.Defaults.CacheTTL,
+      });
+      return nodeData;
+    }
     return null;
   },
   async listAllNodes(env, uid = "admin") {
-  uid = String(uid || "admin").toLowerCase();
+    uid = String(uid || "admin").toLowerCase();
 
-  const kv = this.getKV(env);
-  if (!kv) return [];
+    const kv = this.getKV(env);
+    if (!kv) return [];
 
-  const key = this.listCacheKey(uid);
-  const now = Date.now();
-  const ttl = Number(Config?.Defaults?.ListCacheTTL || 15000);
+    const key = this.listCacheKey(uid);
+    const now = Date.now();
+    const ttl = Number(Config?.Defaults?.ListCacheTTL || 15000);
 
-  // 1) 命中列表缓存
-  const hit = GLOBALS.NodeListCache.get(key);
-  if (hit && hit.exp > now) return hit.data;
+    // 1) 命中列表缓存
+    const hit = GLOBALS.NodeListCache.get(key);
+    if (hit && hit.exp > now) return hit.data;
 
-  // 2) 并发去重
-  const inflight = GLOBALS.NodeListInflight.get(key);
-  if (inflight) {
-    if (hit?.data) return hit.data; // 有旧值就直接先返回
-    return await inflight;
-  }
+    // 2) 并发去重
+    const inflight = GLOBALS.NodeListInflight.get(key);
+    if (inflight) {
+      if (hit?.data) return hit.data; // 有旧值就直接先返回
+      return await inflight;
+    }
 
-  const task = (async () => {
-    const prefix = this.nodePrefix(uid);
-    let cursor = undefined;
-    const allKeys = [];
-    do {
-      const list = await kv.list(/** @type {any} */ ({ prefix, cursor, limit: 1000 }));
-      if (Array.isArray(list?.keys)) allKeys.push(...list.keys);
-      cursor = list?.list_complete ? undefined : list?.cursor;
-    } while (cursor);
+    const task = (async () => {
+      const prefix = this.nodePrefix(uid);
+      let cursor = undefined;
+      const allKeys = [];
+      do {
+        const list = await kv.list(
+          /** @type {any} */ ({ prefix, cursor, limit: 1000 }),
+        );
+        if (Array.isArray(list?.keys)) allKeys.push(...list.keys);
+        cursor = list?.list_complete ? undefined : list?.cursor;
+      } while (cursor);
 
-    const now2 = Date.now();
+      const now2 = Date.now();
 
-    const nodes = await Promise.all(
-      allKeys.map(async (k) => {
-        const name = String(k?.name || "").replace(prefix, "");
-        if (!name) return null;
+      const nodes = await Promise.all(
+        allKeys.map(async (k) => {
+          const name = String(k?.name || "").replace(prefix, "");
+          if (!name) return null;
 
-        const mk = this.memKey(uid, name);
-        const mem = GLOBALS.NodeCache.get(mk);
-        let v = (mem && mem.exp > now2) ? mem.data : null;
+          const mk = this.memKey(uid, name);
+          const mem = GLOBALS.NodeCache.get(mk);
+          let v = mem && mem.exp > now2 ? mem.data : null;
 
-        if (!v) {
-          const raw = await kv.get(this.nodeKey(uid, name), { type: "json" });
-          v = this.unpackNode(name, raw);
-          if (v) GLOBALS.NodeCache.set(mk, { data: v, exp: now2 + Config.Defaults.CacheTTL });
-        }
+          if (!v) {
+            const raw = await kv.get(this.nodeKey(uid, name), { type: "json" });
+            v = this.unpackNode(name, raw);
+            if (v)
+              GLOBALS.NodeCache.set(mk, {
+                data: v,
+                exp: now2 + Config.Defaults.CacheTTL,
+              });
+          }
 
-        return v;
-      })
-    );
+          return v;
+        }),
+      );
 
-    const out = nodes.filter(Boolean);
-out.sort((a, b) => {
-  const af = a?.favorite ? 1 : 0;
-  const bf = b?.favorite ? 1 : 0;
-  if (af !== bf) return bf - af; // 收藏优先
-  return String(a?.name || "").localeCompare(
-    String(b?.name || ""),
-    "zh-Hans-CN",
-    { sensitivity: "base" }
-  );
-});
-    GLOBALS.NodeListCache.set(key, { data: out, exp: Date.now() + ttl });
-    return out;
-  })().finally(() => {
-    GLOBALS.NodeListInflight.delete(key);
-  });
+      const out = nodes.filter(Boolean);
+      out.sort((a, b) => {
+        // 用你真实字段 fav；并避免布尔值做减法
+        const af = !!a?.fav;
+        const bf = !!b?.fav;
+        if (af !== bf) return af ? -1 : 1; // 收藏优先（af=true 排前）
 
-  GLOBALS.NodeListInflight.set(key, task);
+        const ar = Number.isFinite(Number(a?.rank)) ? Number(a.rank) : 1e9;
+        const br = Number.isFinite(Number(b?.rank)) ? Number(b.rank) : 1e9;
+        if (ar !== br) return ar - br; // rank 小的在前
 
-  // 有旧值先回旧值，后台刷新
-  if (hit?.data) return hit.data;
-
-  return await task;
-},
-async checkOne(target, timeoutMs = 4500) {
-  const start = Date.now();
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-
-  try {
-    const r = await fetch(String(target || ""), {
-      method: "GET",
-      redirect: "manual",
-      signal: ctrl.signal,
-      headers: { "User-Agent": "cf-emby-proxy-check/1.0" }
+        return String(a?.name || "").localeCompare(
+          String(b?.name || ""),
+          "zh-Hans-CN",
+          { sensitivity: "base" },
+        );
+      });
+      GLOBALS.NodeListCache.set(key, { data: out, exp: Date.now() + ttl });
+      return out;
+    })().finally(() => {
+      GLOBALS.NodeListInflight.delete(key);
     });
 
-    const rt = Date.now() - start;
-    clearTimeout(timer);
+    GLOBALS.NodeListInflight.set(key, task);
 
-    const ok = r.status >= 200 && r.status < 500; // 4xx 也算可达
-    return {
-      ok,
-      online: ok,
-      status: r.status,
-      rt,
-      latency: rt,
-      error: ""
-    };
-  } catch (e) {
-    clearTimeout(timer);
-    const rt = Date.now() - start;
-    return {
-      ok: false,
-      online: false,
-      status: 0,
-      rt,
-      latency: rt,
-      error: e?.name === "AbortError" ? "TIMEOUT" : (e?.message || "CHECK_FAILED")
-    };
-  }
-},
+    // 有旧值先回旧值，后台刷新
+    if (hit?.data) return hit.data;
+
+    return await task;
+  },
+  async checkOne(target, timeoutMs = 4500) {
+    const start = Date.now();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+    try {
+      const r = await fetch(String(target || ""), {
+        method: "GET",
+        redirect: "manual",
+        signal: ctrl.signal,
+        headers: { "User-Agent": "cf-emby-proxy-check/1.0" },
+      });
+
+      const rt = Date.now() - start;
+      clearTimeout(timer);
+
+      const ok = r.status >= 200 && r.status < 500; // 4xx 也算可达
+      return {
+        ok,
+        online: ok,
+        status: r.status,
+        rt,
+        latency: rt,
+        error: "",
+      };
+    } catch (e) {
+      clearTimeout(timer);
+      const rt = Date.now() - start;
+      return {
+        ok: false,
+        online: false,
+        status: 0,
+        rt,
+        latency: rt,
+        error:
+          e?.name === "AbortError" ? "TIMEOUT" : e?.message || "CHECK_FAILED",
+      };
+    }
+  },
 
   async handleApi(request, env) {
     const auth = Auth.check(request, env);
@@ -443,7 +519,10 @@ async checkOne(target, timeoutMs = 4500) {
     if (!kv) {
       return new Response(
         JSON.stringify({ error: "D1未绑定! 请检查 EMBY_D1 / D1 / DB" }),
-        { status: 500, headers: { "Content-Type": "application/json;charset=utf-8" } }
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json;charset=utf-8" },
+        },
       );
     }
 
@@ -453,26 +532,26 @@ async checkOne(target, timeoutMs = 4500) {
     } catch {
       return new Response(JSON.stringify({ error: "Invalid JSON" }), {
         status: 400,
-        headers: { "Content-Type": "application/json;charset=utf-8" }
+        headers: { "Content-Type": "application/json;charset=utf-8" },
       });
     }
 
     const cache = caches.default;
-const invalidate = async (name) => {
-  GLOBALS.NodeCache.delete(this.memKey(uid, name));
-  GLOBALS.NodeHostIndexCache.delete(uid);
-  GLOBALS.NodeHostIndexInflight.delete(uid);
-  const lk = this.listCacheKey(uid);
-  GLOBALS.NodeListCache.delete(lk);
-  GLOBALS.NodeListInflight.delete(lk);
+    const invalidate = async (name) => {
+      GLOBALS.NodeCache.delete(this.memKey(uid, name));
+      GLOBALS.NodeHostIndexCache.delete(uid);
+      GLOBALS.NodeHostIndexInflight.delete(uid);
+      const lk = this.listCacheKey(uid);
+      GLOBALS.NodeListCache.delete(lk);
+      GLOBALS.NodeListInflight.delete(lk);
 
-  await cache.delete(this.cacheUrl(uid, name));
-};
+      await cache.delete(this.cacheUrl(uid, name));
+    };
     switch (data.action) {
       case "list": {
         const nodes = await this.listAllNodes(env, uid);
         return new Response(JSON.stringify({ nodes, uid }), {
-          headers: { "Content-Type": "application/json;charset=utf-8" }
+          headers: { "Content-Type": "application/json;charset=utf-8" },
         });
       }
       case "toggleFav": {
@@ -480,7 +559,7 @@ const invalidate = async (name) => {
         if (!vn.ok) {
           return new Response(JSON.stringify({ error: vn.error }), {
             status: 400,
-            headers: { "Content-Type": "application/json;charset=utf-8" }
+            headers: { "Content-Type": "application/json;charset=utf-8" },
           });
         }
         const name = vn.value;
@@ -489,7 +568,7 @@ const invalidate = async (name) => {
         if (!node) {
           return new Response(JSON.stringify({ error: "节点不存在" }), {
             status: 404,
-            headers: { "Content-Type": "application/json;charset=utf-8" }
+            headers: { "Content-Type": "application/json;charset=utf-8" },
           });
         }
 
@@ -497,16 +576,19 @@ const invalidate = async (name) => {
         await kv.put(this.nodeKey(uid, name), this.packNode(node));
         await invalidate(name);
 
-        return new Response(JSON.stringify({ success: true, name, fav: node.fav }), {
-          headers: { "Content-Type": "application/json;charset=utf-8" }
-        });
+        return new Response(
+          JSON.stringify({ success: true, name, fav: node.fav }),
+          {
+            headers: { "Content-Type": "application/json;charset=utf-8" },
+          },
+        );
       }
 
       case "saveOrder": {
         const names = Array.isArray(data.names) ? data.names : [];
         if (!names.length) {
           return new Response(JSON.stringify({ success: true, saved: 0 }), {
-            headers: { "Content-Type": "application/json;charset=utf-8" }
+            headers: { "Content-Type": "application/json;charset=utf-8" },
           });
         }
 
@@ -527,7 +609,7 @@ const invalidate = async (name) => {
         }
 
         return new Response(JSON.stringify({ success: true, saved }), {
-          headers: { "Content-Type": "application/json;charset=utf-8" }
+          headers: { "Content-Type": "application/json;charset=utf-8" },
         });
       }
 
@@ -537,7 +619,7 @@ const invalidate = async (name) => {
         if (!Array.isArray(items)) {
           return new Response(JSON.stringify({ error: "nodes 必须为数组" }), {
             status: 400,
-            headers: { "Content-Type": "application/json;charset=utf-8" }
+            headers: { "Content-Type": "application/json;charset=utf-8" },
           });
         }
 
@@ -551,38 +633,86 @@ const invalidate = async (name) => {
             continue;
           }
 
-/** @type {{name:string,target:string,secret:string,tag:string,note:string}} */
-const n = v.value;
+          /** @type {{name:string,displayName?:string,target:string,mode?:string,streamTarget?:string,fav?:boolean,rank?:number,secret:string,tag:string,note:string}} */
+          const n = v.value;
 
-const oldNameRaw = String(raw?.oldName || "").trim().toLowerCase();
-const oldName = Validators.NAME_RE.test(oldNameRaw) ? oldNameRaw : "";
-const newKey = this.nodeKey(uid, n.name);
+          const oldNameRaw = String(raw?.oldName || "")
+            .trim()
+            .toLowerCase();
+          const oldName = Validators.NAME_RE.test(oldNameRaw) ? oldNameRaw : "";
+          const newKey = this.nodeKey(uid, n.name);
 
-if (data.action === "save") {
-  const exists = await kv.get(newKey);
-  if (!oldName && exists) {
-    errors.push({ name: n.name, error: "名称重复：该节点已存在" });
-    continue;
-  }
-  if (oldName && oldName !== n.name && exists) {
-    errors.push({ name: n.name, error: "名称重复：该节点已存在" });
-    continue;
-  }
-}
+          if (data.action === "save") {
+            const exists = await kv.get(newKey);
+            if (!oldName && exists) {
+              errors.push({
+                name: n.name,
+                error: "请求路径重复：该节点已存在",
+              });
+              continue;
+            }
+            if (oldName && oldName !== n.name && exists) {
+              errors.push({
+                name: n.name,
+                error: "请求路径重复：该节点已存在",
+              });
+              continue;
+            }
+          }
 
-await kv.put(newKey, this.packNode(n));
-await invalidate(n.name);
+          // 关键：编辑时若未传 rank，继承旧 rank，避免编辑后跑到最后
+          let toSave = n;
 
-if (data.action === "save" && oldName && oldName !== n.name) {
-  await kv.delete(this.nodeKey(uid, oldName));
-  await invalidate(oldName);
-}
-saved++;
+          if (data.action === "save") {
+            const prevName = oldName || n.name;
+            const prevRaw = await kv.get(this.nodeKey(uid, prevName), {
+              type: "json",
+            });
+            const prevNode = this.unpackNode(prevName, prevRaw);
+
+            const hasFavInPayload =
+              raw && Object.prototype.hasOwnProperty.call(raw, "fav");
+            const hasRankInPayload =
+              raw && Object.prototype.hasOwnProperty.call(raw, "rank");
+
+            // fav：如果前端没传，就继承旧值
+            const keepFav = hasFavInPayload ? !!n.fav : !!prevNode?.fav;
+
+            // rank：如果前端没传，就继承旧值
+            let keepRank;
+            if (hasRankInPayload) {
+              keepRank = Number.isFinite(Number(n.rank))
+                ? Number(n.rank)
+                : undefined;
+            } else {
+              keepRank = Number.isFinite(Number(prevNode?.rank))
+                ? Number(prevNode.rank)
+                : undefined;
+            }
+
+            toSave = { ...n, fav: keepFav, rank: keepRank };
+          }
+          await kv.put(newKey, this.packNode(toSave));
+          await invalidate(n.name);
+
+          if (data.action === "save" && oldName && oldName !== n.name) {
+            await kv.delete(this.nodeKey(uid, oldName));
+            await invalidate(oldName);
+          }
+          saved++;
         }
 
-        return new Response(JSON.stringify({ success: true, saved, failed: errors.length, errors }), {
-          headers: { "Content-Type": "application/json;charset=utf-8" }
-        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            saved,
+            failed: errors.length,
+            errors,
+          }),
+          {
+            headers: { "Content-Type": "application/json;charset=utf-8" },
+          },
+        );
       }
 
       case "delete": {
@@ -590,14 +720,14 @@ saved++;
         if (!vn.ok) {
           return new Response(JSON.stringify({ error: vn.error }), {
             status: 400,
-            headers: { "Content-Type": "application/json;charset=utf-8" }
+            headers: { "Content-Type": "application/json;charset=utf-8" },
           });
         }
         const name = vn.value;
         await kv.delete(this.nodeKey(uid, name));
         await invalidate(name);
         return new Response(JSON.stringify({ success: true }), {
-          headers: { "Content-Type": "application/json;charset=utf-8" }
+          headers: { "Content-Type": "application/json;charset=utf-8" },
         });
       }
 
@@ -613,7 +743,7 @@ saved++;
           count++;
         }
         return new Response(JSON.stringify({ success: true, count }), {
-          headers: { "Content-Type": "application/json;charset=utf-8" }
+          headers: { "Content-Type": "application/json;charset=utf-8" },
         });
       }
 
@@ -627,19 +757,18 @@ saved++;
           if (!vn.ok) continue;
           const name = vn.value;
           const key = this.nodeKey(uid, name);
-const cur = await kv.get(key, { type: "json" });
-const node = this.unpackNode(name, cur);
-if (node) {
-  node.tag = tag;
-  await kv.put(key, this.packNode(node));
-  await invalidate(name);
-  count++;
-}
-
+          const cur = await kv.get(key, { type: "json" });
+          const node = this.unpackNode(name, cur);
+          if (node) {
+            node.tag = tag;
+            await kv.put(key, this.packNode(node));
+            await invalidate(name);
+            count++;
+          }
         }
 
         return new Response(JSON.stringify({ success: true, count }), {
-          headers: { "Content-Type": "application/json;charset=utf-8" }
+          headers: { "Content-Type": "application/json;charset=utf-8" },
         });
       }
       case "compactAll": {
@@ -647,21 +776,36 @@ if (node) {
         const limit = Math.max(1, Math.min(1000, Number(data.limit) || 500));
         const cursor = data.cursor ? String(data.cursor) : undefined;
         const dryRun = !!data.dryRun;
-        const list = await kv.list(/** @type {any} */ ({ prefix, cursor, limit }));
-        let scanned = 0, rewritten = 0, skipped = 0, invalid = 0;
-        for (const k of (list.keys || [])) {
+        const list = await kv.list(
+          /** @type {any} */ ({ prefix, cursor, limit }),
+        );
+        let scanned = 0,
+          rewritten = 0,
+          skipped = 0,
+          invalid = 0;
+        for (const k of list.keys || []) {
           scanned++;
           const name = k.name.slice(prefix.length);
 
           const raw = await kv.get(k.name, { type: "json" });
           const node = this.unpackNode(name, raw);
-          if (!node) { invalid++; continue; }
+          if (!node) {
+            invalid++;
+            continue;
+          }
 
           const isOldFormat =
-            raw && typeof raw === "object" &&
-            ("target" in raw || "secret" in raw || "tag" in raw || "note" in raw);
+            raw &&
+            typeof raw === "object" &&
+            ("target" in raw ||
+              "secret" in raw ||
+              "tag" in raw ||
+              "note" in raw);
 
-          if (!isOldFormat) { skipped++; continue; }
+          if (!isOldFormat) {
+            skipped++;
+            continue;
+          }
 
           if (!dryRun) {
             await kv.put(k.name, this.packNode(node));
@@ -671,241 +815,269 @@ if (node) {
         }
 
         const done = !!list.list_complete;
-        return new Response(JSON.stringify({
-          success: true,
-          dryRun,
-          scanned,
-          rewritten,
-          skipped,
-          invalid,
-          done,
-          nextCursor: done ? null : list.cursor
-        }), {
-          headers: { "Content-Type": "application/json;charset=utf-8" }
-        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            dryRun,
+            scanned,
+            rewritten,
+            skipped,
+            invalid,
+            done,
+            nextCursor: done ? null : list.cursor,
+          }),
+          {
+            headers: { "Content-Type": "application/json;charset=utf-8" },
+          },
+        );
       }
 
-case "checkStatus": {
-  try {
-    let target = [];
+      case "checkStatus": {
+        try {
+          let target = [];
 
-    if (Array.isArray(data.names) && data.names.length > 0) {
-      const names = data.names
-        .map((x) => Validators.validateName(x))
-        .filter((x) => x.ok)
-        .map((x) => x.value);
+          if (Array.isArray(data.names) && data.names.length > 0) {
+            const names = data.names
+              .map((x) => Validators.validateName(x))
+              .filter((x) => x.ok)
+              .map((x) => x.value);
 
-      const uniq = [...new Set(names)];
-      const got = await Promise.all(uniq.map((n) => this.getNode(n, env, null, uid)));
-      target = got.filter(Boolean);
-    } else {
-      // 只有“检测全部”才全量 list
-      target = await this.listAllNodes(env, uid);
-    }
+            const uniq = [...new Set(names)];
+            const got = await Promise.all(
+              uniq.map((n) => this.getNode(n, env, null, uid)),
+            );
+            target = got.filter(Boolean);
+          } else {
+            // 只有“检测全部”才全量 list
+            target = await this.listAllNodes(env, uid);
+          }
 
-    const results = [];
-    const origin = new URL(request.url).origin;
-    const concurrency = 6;
-    let idx = 0;
+          const results = [];
+          const origin = new URL(request.url).origin;
+          const concurrency = 6;
+          let idx = 0;
 
-    const worker = async () => {
-      while (idx < target.length) {
-        const i = idx++;
-        const n = target[i];
+          const worker = async () => {
+            while (idx < target.length) {
+              const i = idx++;
+              const n = target[i];
 
-        if (!n || !n.name) {
-          results.push({
-            name: n?.name || "",
-            ok: false,
-            online: false,
-            status: 0,
-            rt: 0,
-            latency: 0,
-            error: "NO_NODE"
+              if (!n || !n.name) {
+                results.push({
+                  name: n?.name || "",
+                  ok: false,
+                  online: false,
+                  status: 0,
+                  rt: 0,
+                  latency: 0,
+                  error: "NO_NODE",
+                });
+                continue;
+              }
+
+              const nodeNameEnc = encodeURIComponent(String(n.name || ""));
+              const secretEnc = String(n.secret || "").trim()
+                ? "/" + encodeURIComponent(String(n.secret || "").trim())
+                : "";
+              const proxyPath = `/${nodeNameEnc}${secretEnc}/`;
+              const urlToCheck = origin + proxyPath; // 改为检测代理地址
+              const r = await this.checkOne(urlToCheck, 4500);
+              results.push({
+                name: n.name || "",
+                ok: !!r.ok,
+                online: !!r.online,
+                status: r.status || 0,
+                rt: r.rt || 0,
+                latency: r.latency || r.rt || 0,
+                checked: urlToCheck,
+                error: r.error || "",
+              });
+            }
+          };
+
+          await Promise.all(
+            Array.from(
+              { length: Math.min(concurrency, Math.max(1, target.length)) },
+              () => worker(),
+            ),
+          );
+
+          return new Response(JSON.stringify({ success: true, results }), {
+            headers: { "Content-Type": "application/json;charset=utf-8" },
           });
-          continue;
+        } catch (e) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              results: [],
+              error: "CHECK_STATUS_FAIL: " + (e?.message || String(e)),
+            }),
+            {
+              status: 200, // 改这里
+              headers: { "Content-Type": "application/json;charset=utf-8" },
+            },
+          );
         }
-
-        const nodeNameEnc = encodeURIComponent(String(n.name || ""));
-const secretEnc = String(n.secret || "").trim()
-  ? "/" + encodeURIComponent(String(n.secret || "").trim())
-  : "";
-const proxyPath = `/${nodeNameEnc}${secretEnc}/`;
-const urlToCheck = origin + proxyPath; // 改为检测代理地址
-const r = await this.checkOne(urlToCheck, 4500);
-        results.push({
-          name: n.name || "",
-          ok: !!r.ok,
-          online: !!r.online,
-          status: r.status || 0,
-          rt: r.rt || 0,
-          latency: r.latency || r.rt || 0,
-          checked: urlToCheck,
-          error: r.error || ""
-        });
       }
-    };
-
-    await Promise.all(
-      Array.from({ length: Math.min(concurrency, Math.max(1, target.length)) }, () => worker())
-    );
-
-    return new Response(JSON.stringify({ success: true, results }), {
-      headers: { "Content-Type": "application/json;charset=utf-8" }
-    });
- } catch (e) {
-  return new Response(JSON.stringify({
-    success: false,
-    results: [],
-    error: "CHECK_STATUS_FAIL: " + (e?.message || String(e))
-  }), {
-    status: 200, // 改这里
-    headers: { "Content-Type": "application/json;charset=utf-8" }
-  });
-}
-}
       default:
         return new Response("Invalid Action", { status: 400 });
     }
   },
 
-getHostIndexTTL() {
-  return 6 * 60 * 60 * 1000; // 6小时（节点几乎不变场景）
-},
+  getHostIndexTTL() {
+    return 6 * 60 * 60 * 1000; // 6小时（节点几乎不变场景）
+  },
 
-async rebuildHostIndex(env, uid = "admin") {
-  uid = String(uid || "admin").toLowerCase();
+  async rebuildHostIndex(env, uid = "admin") {
+    uid = String(uid || "admin").toLowerCase();
 
-  const nodes = await this.listAllNodes(env, uid);
-  const hostMap = new Map();
+    const nodes = await this.listAllNodes(env, uid);
+    const hostMap = new Map();
 
-  for (const n of nodes) {
-    if (!n || !n.target) continue;
-    try {
-      const h = new URL(n.target).host.toLowerCase();
-      if (!hostMap.has(h)) hostMap.set(h, { uid, name: n.name, secret: n.secret || "" });
-    } catch {}
-  }
+    for (const n of nodes) {
+      if (!n || !n.target) continue;
+      try {
+        const h = new URL(n.target).host.toLowerCase();
+        if (!hostMap.has(h))
+          hostMap.set(h, { uid, name: n.name, secret: n.secret || "" });
+      } catch {}
+    }
 
-  GLOBALS.NodeHostIndexCache.set(uid, {
-    hostMap,
-    exp: Date.now() + this.getHostIndexTTL()
-  });
+    GLOBALS.NodeHostIndexCache.set(uid, {
+      hostMap,
+      exp: Date.now() + this.getHostIndexTTL(),
+    });
 
-  return hostMap;
-},
+    return hostMap;
+  },
 
-async getHostIndex(env, uid = "admin") {
-  uid = String(uid || "admin").toLowerCase();
-  const now = Date.now();
-  const hit = GLOBALS.NodeHostIndexCache.get(uid);
+  async getHostIndex(env, uid = "admin") {
+    uid = String(uid || "admin").toLowerCase();
+    const now = Date.now();
+    const hit = GLOBALS.NodeHostIndexCache.get(uid);
 
-  // 1) 未过期直接返回
-  if (hit && hit.exp > now) return hit.hostMap;
+    // 1) 未过期直接返回
+    if (hit && hit.exp > now) return hit.hostMap;
 
-  // 2) 过期但有旧数据：先返回旧数据，同时后台刷新
-  if (hit && hit.hostMap) {
-    if (!GLOBALS.NodeHostIndexInflight.has(uid)) {
-      const p = this.rebuildHostIndex(env, uid).finally(() => {
+    // 2) 过期但有旧数据：先返回旧数据，同时后台刷新
+    if (hit && hit.hostMap) {
+      if (!GLOBALS.NodeHostIndexInflight.has(uid)) {
+        const p = this.rebuildHostIndex(env, uid).finally(() => {
+          GLOBALS.NodeHostIndexInflight.delete(uid);
+        });
+        GLOBALS.NodeHostIndexInflight.set(uid, p);
+      }
+      return hit.hostMap;
+    }
+
+    // 3) 没缓存：并发去重，避免同时 list
+    let p = GLOBALS.NodeHostIndexInflight.get(uid);
+    if (!p) {
+      p = this.rebuildHostIndex(env, uid).finally(() => {
         GLOBALS.NodeHostIndexInflight.delete(uid);
       });
       GLOBALS.NodeHostIndexInflight.set(uid, p);
     }
-    return hit.hostMap;
-  }
-
-  // 3) 没缓存：并发去重，避免同时 list
-  let p = GLOBALS.NodeHostIndexInflight.get(uid);
-  if (!p) {
-    p = this.rebuildHostIndex(env, uid).finally(() => {
-      GLOBALS.NodeHostIndexInflight.delete(uid);
-    });
-    GLOBALS.NodeHostIndexInflight.set(uid, p);
-  }
-  return await p;
-},
+    return await p;
+  },
 };
 
 const ProxyHandler = {
   buildRawAllowHosts(node, env) {
-  const set = new Set();
+    const set = new Set();
 
-  try { set.add(new URL(node.target).host.toLowerCase()); } catch {}
-  // 可选额外白名单：env.RAW_ALLOW_HOSTS=host1,host2
-  const extra = String(env.RAW_ALLOW_HOSTS || "").trim();
-  if (extra) {
-    for (const h of extra.split(",")) {
-      const v = h.trim().toLowerCase();
-      if (v) set.add(v);
+    try {
+      set.add(new URL(node.target).host.toLowerCase());
+    } catch {}
+    // 可选额外白名单：env.RAW_ALLOW_HOSTS=host1,host2
+    const extra = String(env.RAW_ALLOW_HOSTS || "").trim();
+    if (extra) {
+      for (const h of extra.split(",")) {
+        const v = h.trim().toLowerCase();
+        if (v) set.add(v);
+      }
     }
-  }
 
-  return set;
-},
-routePrefix(name, key, uid = "admin"){
-  const n = encodeURIComponent(String(name || ""));
-  const k = String(key || "");
-  const u = String(uid || "admin").toLowerCase();
+    return set;
+  },
+  routePrefix(name, key, uid = "admin") {
+    const n = encodeURIComponent(String(name || ""));
+    const k = String(key || "");
+    const u = String(uid || "admin").toLowerCase();
 
-  const base = (u && u !== "admin")
-    ? `/u/${encodeURIComponent(u)}/${n}`
-    : `/${n}`;
+    const base =
+      u && u !== "admin" ? `/u/${encodeURIComponent(u)}/${n}` : `/${n}`;
 
-  return k ? `${base}/${encodeURIComponent(k)}` : base;
-},
-sameHost(a, b) {
-  try {
-    const ua = new URL(a);
-    const ub = new URL(b);
+    return k ? `${base}/${encodeURIComponent(k)}` : base;
+  },
+  sameHost(a, b) {
+    try {
+      const ua = new URL(a);
+      const ub = new URL(b);
 
-    const ha = ua.hostname.toLowerCase();
-    const hb = ub.hostname.toLowerCase();
-    if (ha !== hb) return false;
+      const ha = ua.hostname.toLowerCase();
+      const hb = ub.hostname.toLowerCase();
+      if (ha !== hb) return false;
 
-    const pa = ua.port || (ua.protocol === "https:" ? "443" : "80");
-    const pb = ub.port || (ub.protocol === "https:" ? "443" : "80");
-    return pa === pb;
-  } catch {
-    return false;
-  }
-},
+      const pa = ua.port || (ua.protocol === "https:" ? "443" : "80");
+      const pb = ub.port || (ub.protocol === "https:" ? "443" : "80");
+      return pa === pb;
+    } catch {
+      return false;
+    }
+  },
 
   async handle(request, node, path, name, key, env, uid = "admin") {
-let base = new URL(node.target);
+    let base = new URL(node.target);
 
-const ua = request.headers.get("User-Agent") || "";
-const isCapy = /CapyPlayer|Dart/i.test(ua);
+    const ua = request.headers.get("User-Agent") || "";
+    const isCapy = /CapyPlayer|Dart/i.test(ua);
 
-let forwardPath = path || "/";
-// 默认不去掉 /emby，避免前后端分离 403
-const capyStrip = String(env.CAPY_STRIP_EMBY || "0") === "1";
-if (capyStrip && isCapy && /^\/emby(\/|$)/i.test(forwardPath)) {
-  forwardPath = forwardPath.replace(/^\/emby/i, "") || "/";
-}
-// 分离模式但未填写 streamTarget：允许通过 /__raw__/ 走反代兜底
-if (node.mode === "split" && !node.streamTarget && forwardPath.startsWith("/__raw__/")) {
-  let raw = forwardPath.slice("/__raw__/".length);
-  try { raw = decodeURIComponent(raw); } catch {}
+    let forwardPath = path || "/";
+    // 默认不去掉 /emby，避免前后端分离 403
+    const capyStrip = String(env.CAPY_STRIP_EMBY || "0") === "1";
+    if (capyStrip && isCapy && /^\/emby(\/|$)/i.test(forwardPath)) {
+      forwardPath = forwardPath.replace(/^\/emby/i, "") || "/";
+    }
+    // 分离模式但未填写 streamTarget：允许通过 /__raw__/ 走反代兜底
+    if (
+      node.mode === "split" &&
+      !node.streamTarget &&
+      forwardPath.startsWith("/__raw__/")
+    ) {
+      let raw = forwardPath.slice("/__raw__/".length);
+      try {
+        raw = decodeURIComponent(raw);
+      } catch {}
 
-  let u;
-  try { u = new URL(raw); } catch { return new Response("Bad raw url", { status: 400 }); }
-  if (!/^https?:$/i.test(u.protocol)) return new Response("Forbidden", { status: 403 });
+      let u;
+      try {
+        u = new URL(raw);
+      } catch {
+        return new Response("Bad raw url", { status: 400 });
+      }
+      if (!/^https?:$/i.test(u.protocol))
+        return new Response("Forbidden", { status: 403 });
 
-  const allowHosts = this.buildRawAllowHosts(node, env);
+      const allowHosts = this.buildRawAllowHosts(node, env);
 
-// split 且未填写 streamTarget：为了保证可用性，允许 __raw__ 透传任意 http(s) host
-// 如需收紧，把下面 true 改成读取 env 开关
-const allowAnyWhenSplitNoStream = true;
-if (
-  !allowHosts.has(u.host.toLowerCase()) &&
-  !(node.mode === "split" && !node.streamTarget && allowAnyWhenSplitNoStream)
-) {
-  return new Response("Forbidden raw host", { status: 403 });
-}
-  return this.handleDirect(request, raw, env);
-}
+      // split 且未填写 streamTarget：为了保证可用性，允许 __raw__ 透传任意 http(s) host
+      // 如需收紧，把下面 true 改成读取 env 开关
+      const allowAnyWhenSplitNoStream = true;
+      if (
+        !allowHosts.has(u.host.toLowerCase()) &&
+        !(
+          node.mode === "split" &&
+          !node.streamTarget &&
+          allowAnyWhenSplitNoStream
+        )
+      ) {
+        return new Response("Forbidden raw host", { status: 403 });
+      }
+      return this.handleDirect(request, raw, env);
+    }
 
-const finalUrl = new URL(forwardPath, base);
+    const finalUrl = new URL(forwardPath, base);
 
     finalUrl.search = new URL(request.url).search;
 
@@ -915,58 +1087,71 @@ const finalUrl = new URL(forwardPath, base);
     if (request.method === "OPTIONS") return this.renderCors(request, env);
     const isStreaming = GLOBALS.Regex.Streaming.test(forwardPath);
     const isStatic =
-      (GLOBALS.Regex.StaticExt.test(forwardPath) || GLOBALS.Regex.EmbyImages.test(forwardPath)) &&
+      (GLOBALS.Regex.StaticExt.test(forwardPath) ||
+        GLOBALS.Regex.EmbyImages.test(forwardPath)) &&
       request.method === "GET";
 
-const h = new Headers(request.headers);
-const p = finalUrl.pathname.toLowerCase();
-const isAuthApi = p.includes("/users/authenticatebyname");
-const isPlaybackApi =
-  p.includes("/items/") ||
-  p.includes("/videos/") ||
-  p.includes("/playback/") ||
-  p.includes("/sessions/playing");
-const needCompatOrigin = isAuthApi || isPlaybackApi || isStreaming;
+    const h = new Headers(request.headers);
+    const reqUrl = new URL(request.url);
+    const reqProto = reqUrl.protocol.replace(":", "");
+    const reqHost = reqUrl.host;
+    const reqPort = reqUrl.port || (reqProto === "https" ? "443" : "80");
 
-// Capy 登录兼容：清 token 冲突，但不要删 Referer/Origin
-if (isCapy && isAuthApi) {
-  h.delete("X-Emby-Token");
-  h.delete("X-MediaBrowser-Token");
-  h.delete("X-Authorization");
+    const p = finalUrl.pathname.toLowerCase();
 
-  const az = h.get("Authorization") || "";
-  if (/^(Bearer|Token)\s+/i.test(az)) h.delete("Authorization");
+    const isAuthApi = p.includes("/users/authenticatebyname");
+    const isPlaybackApi =
+      p.includes("/items/") ||
+      p.includes("/videos/") ||
+      p.includes("/playback/") ||
+      p.includes("/sessions/playing");
+    const needCompatOrigin = isAuthApi;
+    // Capy 登录兼容：清 token 冲突，但不要删 Referer/Origin
+    if (isCapy && isAuthApi) {
+      h.delete("X-Emby-Token");
+      h.delete("X-MediaBrowser-Token");
+      h.delete("X-Authorization");
 
-  if (!h.get("Content-Type")) h.set("Content-Type", "application/json;charset=utf-8");
-}
+      const az = h.get("Authorization") || "";
+      if (/^(Bearer|Token)\s+/i.test(az)) h.delete("Authorization");
 
-h.set("Host", base.host);
+      if (!h.get("Content-Type"))
+        h.set("Content-Type", "application/json;charset=utf-8");
+    }
 
-// Emby 授权头双向兼容
-const authz = h.get("Authorization") || "";
-const xEmby = h.get("X-Emby-Authorization") || "";
-if (!isAuthApi && /^MediaBrowser\s+/i.test(authz) && !xEmby) {
-  h.set("X-Emby-Authorization", authz);
-}
-if (!isAuthApi && !authz && xEmby) {
-  h.set("Authorization", xEmby);
-}
+    h.set("Host", base.host);
 
-// 前后端分离兼容：补后端期望头（不要删除）
-if (needCompatOrigin) {
-  h.set("Origin", base.origin);
-  h.set("Referer", base.origin + "/");
-  if (!h.get("Accept")) h.set("Accept", "application/json, text/plain, */*");
-  if (isAuthApi && !h.get("X-Requested-With")) h.set("X-Requested-With", "XMLHttpRequest");
-}
+    // Emby 授权头双向兼容
+    const authz = h.get("Authorization") || "";
+    const xEmby = h.get("X-Emby-Authorization") || "";
+    if (!isAuthApi && /^MediaBrowser\s+/i.test(authz) && !xEmby) {
+      h.set("X-Emby-Authorization", authz);
+    }
+    if (!isAuthApi && !authz && xEmby) {
+      h.set("Authorization", xEmby);
+    }
+
+    // 前后端分离兼容：补后端期望头（不要删除）
+    if (needCompatOrigin) {
+      // 不强塞上游域名，优先沿用客户端来源
+      if (!h.get("Origin")) h.set("Origin", reqUrl.origin);
+      if (!h.get("Referer")) h.set("Referer", reqUrl.origin + "/");
+      if (!h.get("Accept"))
+        h.set("Accept", "application/json, text/plain, */*");
+      if (isAuthApi && !h.get("X-Requested-With"))
+        h.set("X-Requested-With", "XMLHttpRequest");
+    }
+
     if (!h.get("User-Agent")) {
       h.set(
         "User-Agent",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile"
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile",
       );
     }
 
-    h.set("X-Forwarded-Proto", base.protocol.replace(":", ""));
+    h.set("X-Forwarded-Proto", reqProto);
+    h.set("X-Forwarded-Host", reqHost);
+    h.set("X-Forwarded-Port", reqPort);
 
     const ip = request.headers.get("cf-connecting-ip");
     if (ip) {
@@ -974,323 +1159,495 @@ if (needCompatOrigin) {
       h.set("X-Forwarded-For", ip);
     }
 
-    ["cf-connecting-ip", "cf-ipcountry", "cf-ray", "cf-visitor", "cf-worker"].forEach((x) => h.delete(x));
-    if (isStreaming && !h.get("Referer")) h.set("Referer", base.origin + "/");
+    [
+      "cf-connecting-ip",
+      "cf-ipcountry",
+      "cf-ray",
+      "cf-visitor",
+      "cf-worker",
+    ].forEach((x) => h.delete(x));
     if (isStatic) h.delete("Range");
 
     let cf = { cacheEverything: false, cacheTtl: 0 };
     if (isStatic) {
       const ck = new URL(finalUrl.toString());
-      ["X-Emby-Token", "api_key", "X-Emby-Authorization", "_", "t", "stamp", "random"].forEach((k) =>
-        ck.searchParams.delete(k)
-      );
+      [
+        "X-Emby-Token",
+        "api_key",
+        "X-Emby-Authorization",
+        "_",
+        "t",
+        "stamp",
+        "random",
+      ].forEach((k) => ck.searchParams.delete(k));
       ck.searchParams.sort();
       cf = {
         cacheEverything: true,
         cacheTtl: 86400 * 30,
         cacheKey: ck.toString(),
-        cacheTtlByStatus: { "200-299": 86400 * 30, "404": 60, "500-599": 0 }
+        cacheTtlByStatus: { "200-299": 86400 * 30, 404: 60, "500-599": 0 },
       };
     }
-try {
-  const method = request.method.toUpperCase();
-  const replayBody = (method === "GET" || method === "HEAD")
-    ? null
-    : await request.clone().arrayBuffer();
+    try {
+      const method = request.method.toUpperCase();
+      const replayBody =
+        method === "GET" || method === "HEAD"
+          ? null
+          : await request.clone().arrayBuffer();
 
-  let res = await this.fetchWithProtocolFallback(finalUrl, {
-    method: request.method,
-    headers: h,
-    body: replayBody ? replayBody.slice(0) : null,
-    redirect: "manual",
-    cf
-  });
+      let res = await this.fetchWithProtocolFallback(finalUrl, {
+        method: request.method,
+        headers: h,
+        body: replayBody ? replayBody.slice(0) : null,
+        redirect: "manual",
+        cf,
+      });
 
-// 403 二次重试：某些源站要求 Origin=反代域名
-if (res.status === 403 && needCompatOrigin) {
-  const h2 = new Headers(h);
-  const reqOrigin = new URL(request.url).origin;
-  h2.set("Origin", reqOrigin);
-  h2.set("Referer", reqOrigin + "/");
+      // 403 二次重试：某些源站要求 Origin=反代域名
+      if (res.status === 403 && needCompatOrigin) {
+        const h2 = new Headers(h);
+        const reqOrigin = new URL(request.url).origin;
+        h2.set("Origin", reqOrigin);
+        h2.set("Referer", reqOrigin + "/");
 
-  res = await this.fetchWithProtocolFallback(finalUrl, {
-    method: request.method,
-    headers: h2,
-    body: replayBody ? replayBody.slice(0) : null,
-    redirect: "manual",
-    cf
-  });
-}
+        res = await this.fetchWithProtocolFallback(finalUrl, {
+          method: request.method,
+          headers: h2,
+          body: replayBody ? replayBody.slice(0) : null,
+          redirect: "manual",
+          cf,
+        });
+      }
 
-// 403 三次兜底：使用“直连风格头”再试一次
-if (res.status === 403) {
-  const h3 = new Headers(request.headers);
-  ["cf-connecting-ip","cf-ipcountry","cf-ray","cf-visitor","cf-worker","x-forwarded-for","x-real-ip"]
-    .forEach(k => h3.delete(k));
+      // 403 三次兜底：使用“直连风格头”再试一次
+      let h3 = null;
+      if (res.status === 403) {
+        h3 = new Headers(request.headers);
+        [
+          "cf-connecting-ip",
+          "cf-ipcountry",
+          "cf-ray",
+          "cf-visitor",
+          "cf-worker",
+          "x-forwarded-for",
+          "x-real-ip",
+          "x-forwarded-proto",
+          "x-forwarded-host",
+          "x-forwarded-port",
+          "forwarded",
+          "origin",
+          "referer",
+          "sec-fetch-site",
+          "sec-fetch-mode",
+          "sec-fetch-dest",
+          "sec-fetch-user",
+        ].forEach((k) => h3.delete(k));
 
-  h3.set("Host", base.host);
-  h3.set("X-Forwarded-Proto", base.protocol.replace(":", ""));
+        h3.set("Host", base.host);
+        h3.set("X-Forwarded-Proto", reqProto);
+        h3.set("X-Forwarded-Host", reqHost);
+        h3.set("X-Forwarded-Port", reqPort);
 
-  res = await this.fetchWithProtocolFallback(finalUrl, {
-    method: request.method,
-    headers: h3,
-    body: replayBody ? replayBody.slice(0) : null,
-    redirect: "manual",
-    cf
-  });
-}
-const headers = new Headers(res.headers);
-const ao = this.pickAllowOrigin(request, env);
-headers.set("Access-Control-Allow-Origin", ao);
-if (ao !== "*") headers.set("Vary", "Origin"); // 用 set 避免重复追加
+        res = await this.fetchWithProtocolFallback(finalUrl, {
+          method: request.method,
+          headers: h3,
+          body: replayBody ? replayBody.slice(0) : null,
+          redirect: "manual",
+          cf,
+        });
+      }
 
-if (isStatic) {
-  headers.set("Access-Control-Allow-Origin", "*"); // 静态固定 *
-  headers.delete("Vary");
-  headers.delete("Set-Cookie");
-  headers.set("Cache-Control", "public, max-age=31536000, s-maxage=86400");
-}
-      else if (isStreaming) {
+      // 403 四次兜底：在三次基础上再做“极简来源头”
+      if (res.status === 403) {
+        const h4 = new Headers(h3 || h);
+        h4.set("Host", base.host);
+        h4.set("X-Forwarded-Proto", reqProto);
+        h4.set("X-Forwarded-Host", reqHost);
+        h4.set("X-Forwarded-Port", reqPort);
+
+        h4.delete("Origin");
+        h4.delete("Referer");
+        h4.delete("Sec-Fetch-Site");
+        h4.delete("Sec-Fetch-Mode");
+        h4.delete("Sec-Fetch-Dest");
+        h4.delete("Sec-Fetch-User");
+
+        res = await this.fetchWithProtocolFallback(finalUrl, {
+          method: request.method,
+          headers: h4,
+          body: replayBody ? replayBody.slice(0) : null,
+          redirect: "manual",
+          cf,
+        });
+      }
+      const headers = new Headers(res.headers);
+      const ao = this.pickAllowOrigin(request, env);
+      headers.set("Access-Control-Allow-Origin", ao);
+      if (ao !== "*") headers.set("Vary", "Origin"); // 用 set 避免重复追加
+
+      if (isStatic) {
+        headers.set("Access-Control-Allow-Origin", "*"); // 静态固定 *
+        headers.delete("Vary");
+        headers.delete("Set-Cookie");
+        headers.set(
+          "Cache-Control",
+          "public, max-age=31536000, s-maxage=86400",
+        );
+      } else if (isStreaming) {
         headers.set("Cache-Control", "no-store");
       }
-let splitLocHit = false;
+      let splitLocHit = false;
 
-// 预取 host 索引
-let hostMap = null;
-try {
-  hostMap = await Database.getHostIndex(env, uid);
-} catch {
-  hostMap = null;
-}
+      // 预取 host 索引
+      let hostMap = null;
+      try {
+        hostMap = await Database.getHostIndex(env, uid);
+      } catch {
+        hostMap = null;
+      }
 
-if (res.status >= 300 && res.status < 400) {
-  const location = headers.get("Location");
-  if (location) {
-    try {
-      const origin = new URL(request.url).origin;
-      const selfPrefix = this.routePrefix(name, key, uid);
-      const selfPrefixNoSlash = selfPrefix.endsWith("/") ? selfPrefix.slice(0, -1) : selfPrefix;
-      const splitMode = String(node?.mode || "") === "split";
+      if (res.status >= 300 && res.status < 400) {
+        const location = headers.get("Location");
+        if (location) {
+          try {
+            const origin = new URL(request.url).origin;
+            const selfPrefix = this.routePrefix(name, key, uid);
+            const selfPrefixNoSlash = selfPrefix.endsWith("/")
+              ? selfPrefix.slice(0, -1)
+              : selfPrefix;
+            const splitMode = true; // 反代：统一按 split 逻辑处理
+            // 1) 相对重定向
+            if (location.startsWith("/")) {
+              const alreadyPrefixed =
+                location === selfPrefixNoSlash ||
+                location.startsWith(selfPrefixNoSlash + "/");
+              if (!splitMode) {
+                // no-op
+              } else if (!alreadyPrefixed) {
+                headers.set("Location", origin + selfPrefix + location);
+              }
+            } else {
+              // 2) 绝对重定向
+              const loc = new URL(location);
+              const locHost = loc.host.toLowerCase();
+              const baseHost = String(base.host || "").toLowerCase();
 
-      // 1) 相对重定向
-      if (location.startsWith("/")) {
-        const alreadyPrefixed =
-          location === selfPrefixNoSlash ||
-          location.startsWith(selfPrefixNoSlash + "/");
+              const alreadyPrefixed =
+                loc.pathname === selfPrefixNoSlash ||
+                loc.pathname.startsWith(selfPrefixNoSlash + "/");
 
-        // 非 split 不改相对重定向，避免误改写（PC 更敏感）
-        if (!splitMode) {
-          // no-op
-        } else if (!alreadyPrefixed) {
-          headers.set("Location", origin + selfPrefix + location);
-        }
-      } else {
-        // 2) 绝对重定向
-        const loc = new URL(location);
-        const locHost = loc.host.toLowerCase();
-        const baseHost = String(base.host || "").toLowerCase();
-
-        const alreadyPrefixed =
-          loc.pathname === selfPrefixNoSlash ||
-          loc.pathname.startsWith(selfPrefixNoSlash + "/");
-
-        if (!alreadyPrefixed) {
-          // split 且无 streamTarget：外域走 __raw__
-          if (splitMode && !node?.streamTarget && locHost !== baseHost) {
-            headers.set("Location", origin + selfPrefix + "/__raw__/" + encodeURIComponent(loc.toString()));
-            splitLocHit = true;
-          }
-          // 外域尝试映射到已配置节点
-          else if (locHost !== baseHost) {
-            const match = hostMap ? (hostMap.get(locHost) || null) : null;
-            if (match) {
-              const prefix = this.routePrefix(match.name, match.secret || "", uid);
-              headers.set("Location", origin + prefix + loc.pathname + loc.search + loc.hash);
+              if (!alreadyPrefixed) {
+                // split 且无 streamTarget：外域走 __raw__
+                if (splitMode && !node?.streamTarget && locHost !== baseHost) {
+                  headers.set(
+                    "Location",
+                    origin +
+                      selfPrefix +
+                      "/__raw__/" +
+                      encodeURIComponent(loc.toString()),
+                  );
+                  splitLocHit = true;
+                }
+                // 外域尝试映射到已配置节点
+                else if (locHost !== baseHost) {
+                  const match = hostMap ? hostMap.get(locHost) || null : null;
+                  if (match) {
+                    const prefix = this.routePrefix(
+                      match.name,
+                      match.secret || "",
+                      uid,
+                    );
+                    headers.set(
+                      "Location",
+                      origin + prefix + loc.pathname + loc.search + loc.hash,
+                    );
+                  }
+                }
+                // split 且同 host 的绝对地址，补回当前节点前缀
+                else if (splitMode) {
+                  headers.set(
+                    "Location",
+                    origin + selfPrefix + loc.pathname + loc.search + loc.hash,
+                  );
+                }
+              }
             }
-          }
-          // split 且同 host 的绝对地址，补回当前节点前缀
-          else if (splitMode) {
-            headers.set("Location", origin + selfPrefix + loc.pathname + loc.search + loc.hash);
-          }
+          } catch {}
         }
       }
-    } catch {}
-  }
-}
-const ct = (headers.get("content-type") || "").toLowerCase();
-if (
-  res.status >= 200 && res.status < 300 &&
-  (
-    ct.includes("application/vnd.apple.mpegurl") ||
-    ct.includes("application/x-mpegurl") ||
-    ct.includes("application/dash+xml")
-  )
-) {
-const raw = await res.text();
-const rewritten = await this.rewriteBodyLinks(raw, request.url, env, uid, node, name, key);
-headers.delete("content-length");
-return new Response(rewritten, { status: res.status, statusText: res.statusText, headers });
+      const ct = (headers.get("content-type") || "").toLowerCase();
+      if (
+        res.status >= 200 &&
+        res.status < 300 &&
+        (ct.includes("application/vnd.apple.mpegurl") ||
+          ct.includes("application/x-mpegurl") ||
+          ct.includes("application/dash+xml"))
+      ) {
+        const raw = await res.text();
+        const rewritten = await this.rewriteBodyLinks(
+          raw,
+          request.url,
+          env,
+          uid,
+          node,
+          name,
+          key,
+        );
+        headers.delete("content-length");
+        return new Response(rewritten, {
+          status: res.status,
+          statusText: res.statusText,
+          headers,
+        });
       }
 
-      return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
-
+      return new Response(res.body, {
+        status: res.status,
+        statusText: res.statusText,
+        headers,
+      });
     } catch (err) {
-      return new Response("Proxy Error: " + (err?.message || ""), { status: 502 });
+      return new Response("Proxy Error: " + (err?.message || ""), {
+        status: 502,
+      });
     }
   },
 
-async fetchWithProtocolFallback(urlObj, init = {}) {
-  const u1 = new URL(urlObj.toString());
-  const u2 = new URL(urlObj.toString());
-  u2.protocol = u1.protocol === "https:" ? "http:" : "https:";
+  async fetchWithProtocolFallback(urlObj, init = {}) {
+    const u1 = new URL(urlObj.toString());
+    const u2 = new URL(urlObj.toString());
+    u2.protocol = u1.protocol === "https:" ? "http:" : "https:";
 
-  const method = String(init.method || "GET").toUpperCase();
-  const hasBody = method !== "GET" && method !== "HEAD" && init.body != null;
+    const method = String(init.method || "GET").toUpperCase();
+    const hasBody = method !== "GET" && method !== "HEAD" && init.body != null;
 
-  const maxBytes = Number(Config?.Defaults?.MaxRetryBodyBytes || 8 * 1024 * 1024);
+    const maxBytes = Number(
+      Config?.Defaults?.MaxRetryBodyBytes || 8 * 1024 * 1024,
+    );
 
-  // 是否允许回退重试（有 body 时受大小限制）
-  let allowFallback = true;
-  let preparedBody = null;
+    // 是否允许回退重试（有 body 时受大小限制）
+    let allowFallback = true;
+    let preparedBody = null;
 
-  if (hasBody) {
-    const cl = Number((init.headers && (new Headers(init.headers)).get("content-length")) || 0);
-    if (cl > maxBytes) allowFallback = false;
+    if (hasBody) {
+      const cl = Number(
+        (init.headers && new Headers(init.headers).get("content-length")) || 0,
+      );
+      if (cl > maxBytes) allowFallback = false;
 
-    const b = init.body;
-    const reusable =
-      typeof b === "string" ||
-      b instanceof ArrayBuffer ||
-      ArrayBuffer.isView(b) ||
-      b instanceof URLSearchParams ||
-      b instanceof FormData ||
-      b instanceof Blob;
+      const b = init.body;
+      const reusable =
+        typeof b === "string" ||
+        b instanceof ArrayBuffer ||
+        ArrayBuffer.isView(b) ||
+        b instanceof URLSearchParams ||
+        b instanceof FormData ||
+        b instanceof Blob;
 
-    if (reusable) {
-      // 可复用类型，尽量估算大小
-      let est = 0;
-      if (typeof b === "string") est = new TextEncoder().encode(b).byteLength;
-      else if (b instanceof ArrayBuffer) est = b.byteLength;
-      else if (ArrayBuffer.isView(b)) est = b.byteLength;
-      else if (b instanceof Blob) est = b.size;
-      if (est > maxBytes) allowFallback = false;
+      if (reusable) {
+        // 可复用类型，尽量估算大小
+        let est = 0;
+        if (typeof b === "string") est = new TextEncoder().encode(b).byteLength;
+        else if (b instanceof ArrayBuffer) est = b.byteLength;
+        else if (ArrayBuffer.isView(b)) est = b.byteLength;
+        else if (b instanceof Blob) est = b.size;
+        if (est > maxBytes) allowFallback = false;
 
-      preparedBody = b;
-    } else {
-      // ReadableStream 需要读进内存；超限则不允许回退
-      preparedBody = await new Response(b).arrayBuffer();
-      if (preparedBody.byteLength > maxBytes) allowFallback = false;
+        preparedBody = b;
+      } else {
+        // ReadableStream 需要读进内存；超限则不允许回退
+        preparedBody = await new Response(b).arrayBuffer();
+        if (preparedBody.byteLength > maxBytes) allowFallback = false;
+      }
     }
-  }
 
-  const buildInit = () => ({
-    ...init,
-    headers: new Headers(init.headers || {}),
-    body: hasBody
-      ? (preparedBody instanceof ArrayBuffer ? preparedBody.slice(0) : preparedBody)
-      : null
-  });
-  let lastErr = null;
-  let firstRes = null;
-  try {
-    firstRes = await fetch(u1.toString(), buildInit());
-    if (![525, 526, 530].includes(firstRes.status)) return firstRes;
-  } catch (e) {
-    lastErr = e;
-  }
-  // 大 body 不回退，直接返回第一次结果/错误
-  if (!allowFallback) {
-    if (firstRes) return firstRes;
-    throw lastErr || new Error("fetch failed");
-  }
-  try {
-    return await fetch(u2.toString(), buildInit());
-  } catch (e2) {
-    throw e2 || lastErr || new Error("fetch failed");
-  }
-},
+    const buildInit = () => ({
+      ...init,
+      headers: new Headers(init.headers || {}),
+      body: hasBody
+        ? preparedBody instanceof ArrayBuffer
+          ? preparedBody.slice(0)
+          : preparedBody
+        : null,
+    });
+    let lastErr = null;
+    let firstRes = null;
+    try {
+      firstRes = await fetch(u1.toString(), buildInit());
+      if (![525, 526, 530].includes(firstRes.status)) return firstRes;
+    } catch (e) {
+      lastErr = e;
+    }
+    // 大 body 不回退，直接返回第一次结果/错误
+    if (!allowFallback) {
+      if (firstRes) return firstRes;
+      throw lastErr || new Error("fetch failed");
+    }
+    try {
+      return await fetch(u2.toString(), buildInit());
+    } catch (e2) {
+      throw e2 || lastErr || new Error("fetch failed");
+    }
+  },
 
   buildDirectCandidates(rawPath, search = "") {
     const p = String(rawPath || "").trim();
-    const withQuery = (u) => (search ? (u + (u.includes("?") ? "&" : "?") + search.slice(1)) : u);
+    const withQuery = (u) =>
+      search ? u + (u.includes("?") ? "&" : "?") + search.slice(1) : u;
 
     if (/^https?:\/\//i.test(p)) return [withQuery(p)];
 
     const hostPart = p.split("/")[0].split("?")[0].split("#")[0];
-    if (/:80$/i.test(hostPart)) return [withQuery(`http://${p}`), withQuery(`https://${p}`)];
-    if (/:443$/i.test(hostPart)) return [withQuery(`https://${p}`), withQuery(`http://${p}`)];
+    if (/:80$/i.test(hostPart))
+      return [withQuery(`http://${p}`), withQuery(`https://${p}`)];
+    if (/:443$/i.test(hostPart))
+      return [withQuery(`https://${p}`), withQuery(`http://${p}`)];
 
     return [withQuery(`https://${p}`), withQuery(`http://${p}`)];
   },
 
- async handleDirect(request, rawPath, env) {
-  const reqUrl = new URL(request.url);
-  const candidates = this.buildDirectCandidates(rawPath, reqUrl.search);
-  const method = request.method.toUpperCase();
+  async handleDirect(request, rawPath, env) {
+    const reqUrl = new URL(request.url);
+    const candidates = this.buildDirectCandidates(rawPath, reqUrl.search);
+    const method = request.method.toUpperCase();
 
-  if ((request.headers.get("Upgrade") || "").toLowerCase() === "websocket") {
-    const first = candidates[0];
-    return fetch(first, { headers: request.headers });
-  }
-
-  const hasBody = method !== "GET" && method !== "HEAD";
-  const maxBytes = Number(Config?.Defaults?.MaxRetryBodyBytes || 8 * 1024 * 1024);
-
-  let allowFallback = true;
-  let bodyBuf = null;
-
-  if (hasBody) {
-    const cl = Number(request.headers.get("content-length") || 0);
-    if (cl > maxBytes) allowFallback = false;
-
-    // 仅当需要 fallback 才读入内存
-    if (allowFallback) {
-      bodyBuf = await request.clone().arrayBuffer();
-      if (bodyBuf.byteLength > maxBytes) allowFallback = false;
+    if ((request.headers.get("Upgrade") || "").toLowerCase() === "websocket") {
+      const first = candidates[0];
+      return fetch(first, { headers: request.headers });
     }
-  }
-  let lastErr = null;
-  let lastRes = null;
-  // 若不允许 fallback，只试第一个候选
-  const targets = allowFallback ? candidates : candidates.slice(0, 1);
-  for (const target of targets) {
-    try {
-      const u = new URL(target);
-      const h = new Headers(request.headers);
-      ["cf-connecting-ip", "cf-ipcountry", "cf-ray", "cf-visitor", "cf-worker", "x-forwarded-for", "x-real-ip"]
-        .forEach((k) => h.delete(k));
-      h.set("Host", u.host);
-      h.set("X-Forwarded-Proto", u.protocol.replace(":", ""));
-      const res = await fetch(target, {
-        method,
-        headers: h,
-        body: hasBody ? (bodyBuf ? bodyBuf.slice(0) : request.body) : null,
-        redirect: "manual"
-      });
-      if ([525, 526, 530].includes(res.status)) {
-        lastRes = res;
-        continue;
+
+    const hasBody = method !== "GET" && method !== "HEAD";
+    const maxBytes = Number(
+      Config?.Defaults?.MaxRetryBodyBytes || 8 * 1024 * 1024,
+    );
+
+    let allowFallback = true;
+    let bodyBuf = null;
+
+    if (hasBody) {
+      const cl = Number(request.headers.get("content-length") || 0);
+      if (cl > maxBytes) allowFallback = false;
+
+      // 仅当需要 fallback 才读入内存
+      if (allowFallback) {
+        bodyBuf = await request.clone().arrayBuffer();
+        if (bodyBuf.byteLength > maxBytes) allowFallback = false;
       }
-      const rh = new Headers(res.headers);
-      const ao2 = this.pickAllowOrigin(request, env);
-      rh.set("Access-Control-Allow-Origin", ao2);
-      if (ao2 !== "*") rh.set("Vary", "Origin");
-      return new Response(res.body, {
-        status: res.status,
-        statusText: res.statusText,
-        headers: rh
-      });
-    } catch (e) {
-      lastErr = e;
     }
-  }
-  if (lastRes) return lastRes;
-  return new Response("Proxy Error: " + (lastErr?.message || "unknown"), { status: 502 });
-},
+    let lastErr = null;
+    let lastRes = null;
+    // 若不允许 fallback，只试第一个候选
+    const targets = allowFallback ? candidates : candidates.slice(0, 1);
+    for (const target of targets) {
+      try {
+        const u = new URL(target);
+        const h = new Headers(request.headers);
+        [
+          "cf-connecting-ip",
+          "cf-ipcountry",
+          "cf-ray",
+          "cf-visitor",
+          "cf-worker",
+          "x-forwarded-for",
+          "x-real-ip",
+          "x-forwarded-proto",
+          "x-forwarded-host",
+          "x-forwarded-port",
+          "forwarded",
+          "origin",
+          "referer",
+          "sec-fetch-site",
+          "sec-fetch-mode",
+          "sec-fetch-dest",
+          "sec-fetch-user",
+        ].forEach((k) => h.delete(k));
+
+        h.set("Host", u.host);
+        const reqProto2 = reqUrl.protocol.replace(":", "");
+        const reqHost2 = reqUrl.host;
+        const reqPort2 = reqUrl.port || (reqProto2 === "https" ? "443" : "80");
+        h.set("X-Forwarded-Proto", reqProto2);
+        h.set("X-Forwarded-Host", reqHost2);
+        h.set("X-Forwarded-Port", reqPort2);
+
+        let res = await fetch(target, {
+          method,
+          headers: h,
+          body: hasBody ? (bodyBuf ? bodyBuf.slice(0) : request.body) : null,
+          redirect: "manual",
+        });
+
+        // direct 分支 403 再试一次：去来源头
+        if (res.status === 403) {
+          const h2 = new Headers(h);
+          h2.delete("Origin");
+          h2.delete("Referer");
+          h2.delete("Sec-Fetch-Site");
+          h2.delete("Sec-Fetch-Mode");
+          h2.delete("Sec-Fetch-Dest");
+          h2.delete("Sec-Fetch-User");
+
+          res = await fetch(target, {
+            method,
+            headers: h2,
+            body: hasBody ? (bodyBuf ? bodyBuf.slice(0) : request.body) : null,
+            redirect: "manual",
+          });
+        }
+
+        if ([525, 526, 530].includes(res.status)) {
+          lastRes = res;
+          continue;
+        }
+
+        const rh = new Headers(res.headers);
+
+        // __raw__ 请求下，重写 3xx Location，避免客户端跳出代理
+        try {
+          const reqU = new URL(request.url);
+          const i = reqU.pathname.indexOf("/__raw__/");
+          const selfPrefix = i >= 0 ? reqU.pathname.slice(0, i) : "";
+
+          if (res.status >= 300 && res.status < 400) {
+            const loc = rh.get("Location");
+            if (loc && selfPrefix) {
+              const abs = new URL(loc, target); // target 是当前 direct 目标
+              if (/^https?:$/i.test(abs.protocol)) {
+                rh.set(
+                  "Location",
+                  reqU.origin +
+                    selfPrefix +
+                    "/__raw__/" +
+                    encodeURIComponent(abs.toString()),
+                );
+              }
+            }
+          }
+        } catch {}
+
+        const ao2 = this.pickAllowOrigin(request, env);
+        rh.set("Access-Control-Allow-Origin", ao2);
+        if (ao2 !== "*") rh.set("Vary", "Origin");
+
+        return new Response(res.body, {
+          status: res.status,
+          statusText: res.statusText,
+          headers: rh,
+        });
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (lastRes) return lastRes;
+    return new Response("Proxy Error: " + (lastErr?.message || "unknown"), {
+      status: 502,
+    });
+  },
 
   handleWebSocket(url, request) {
     try {
-      const protocols = request.headers.get("Sec-WebSocket-Protocol") || "emby-websocket";
+      const protocols =
+        request.headers.get("Sec-WebSocket-Protocol") || "emby-websocket";
       const wsTarget = new URL(url);
       wsTarget.protocol = wsTarget.protocol === "https:" ? "wss:" : "ws:";
 
@@ -1301,12 +1658,24 @@ async fetchWithProtocolFallback(urlObj, init = {}) {
 
       const ws = new WebSocket(wsTarget.toString(), protocols);
 
-      ws.addEventListener("message", (e) => { try { server.send(e.data); } catch {} });
-      server.addEventListener("message", (e) => { try { ws.send(e.data); } catch {} });
+      ws.addEventListener("message", (e) => {
+        try {
+          server.send(e.data);
+        } catch {}
+      });
+      server.addEventListener("message", (e) => {
+        try {
+          ws.send(e.data);
+        } catch {}
+      });
 
       const close = () => {
-        try { ws.close(); } catch {}
-        try { server.close(); } catch {}
+        try {
+          ws.close();
+        } catch {}
+        try {
+          server.close();
+        } catch {}
       };
 
       ws.addEventListener("close", close);
@@ -1314,79 +1683,111 @@ async fetchWithProtocolFallback(urlObj, init = {}) {
       server.addEventListener("close", close);
       server.addEventListener("error", close);
 
-      return new Response(null, { status: 101, webSocket: client, headers: { "Sec-WebSocket-Protocol": protocols } });
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+        headers: { "Sec-WebSocket-Protocol": protocols },
+      });
     } catch {
       return new Response("WS Error", { status: 502 });
     }
   },
-async rewriteBodyLinks(text, requestUrl, env, uid, currentNode, currentName, currentKey) {
-  if (!text || typeof text !== "string") return text;
-  const origin = new URL(requestUrl).origin;
-  const urlRe = /https?:\/\/[^\s"'<>\\]+/ig;
-  const urls = [...new Set((text.match(urlRe) || []))];
-  if (!urls.length) return text;
+  async rewriteBodyLinks(
+    text,
+    requestUrl,
+    env,
+    uid,
+    currentNode,
+    currentName,
+    currentKey,
+  ) {
+    if (!text || typeof text !== "string") return text;
+    const origin = new URL(requestUrl).origin;
+    const urlRe = /https?:\/\/[^\s"'<>\\]+/gi;
+    const urls = [...new Set(text.match(urlRe) || [])];
+    if (!urls.length) return text;
 
-  const map = new Map();
+    const map = new Map();
 
-  let hostMap = null;
-  try {
-    hostMap = await Database.getHostIndex(env, uid);
-  } catch {
-    hostMap = null;
-  }
-
-  let curBaseHost = "";
-  try { curBaseHost = new URL(currentNode?.target || "").host.toLowerCase(); } catch {}
-
-  const selfPrefix = this.routePrefix(currentName, currentKey, uid);
-  const splitNoStream = currentNode?.mode === "split" && !currentNode?.streamTarget;
-
-  for (const full of urls) {
-    let u;
-    try { u = new URL(full); } catch { continue; }
-    // B) split + 无 streamTarget：外域绝对地址走 __raw__
-    if (splitNoStream && curBaseHost && u.host.toLowerCase() !== curBaseHost) {
-      map.set(full, origin + selfPrefix + "/__raw__/" + encodeURIComponent(full));
-      continue;
+    let hostMap = null;
+    try {
+      hostMap = await Database.getHostIndex(env, uid);
+    } catch {
+      hostMap = null;
     }
 
-    // C) 已配置节点 host 映射（这里也要带 uid 前缀）
-    const match = hostMap ? (hostMap.get(u.host.toLowerCase()) || null) : null;
-    if (match) {
-      const prefix = this.routePrefix(match.name, match.secret || "", uid);
-      map.set(full, origin + prefix + u.pathname + u.search + u.hash);
-      continue;
+    let curBaseHost = "";
+    try {
+      curBaseHost = new URL(currentNode?.target || "").host.toLowerCase();
+    } catch {}
+
+    const selfPrefix = this.routePrefix(currentName, currentKey, uid);
+    const splitNoStream = true; // 反代：外域链接统一走 __raw__
+    for (const full of urls) {
+      let u;
+      try {
+        u = new URL(full);
+      } catch {
+        continue;
+      }
+      // B) split + 无 streamTarget：外域绝对地址走 __raw__
+      if (
+        splitNoStream &&
+        curBaseHost &&
+        u.host.toLowerCase() !== curBaseHost
+      ) {
+        map.set(
+          full,
+          origin + selfPrefix + "/__raw__/" + encodeURIComponent(full),
+        );
+        continue;
+      }
+
+      // C) 已配置节点 host 映射（这里也要带 uid 前缀）
+      const match = hostMap ? hostMap.get(u.host.toLowerCase()) || null : null;
+      if (match) {
+        const prefix = this.routePrefix(match.name, match.secret || "", uid);
+        map.set(full, origin + prefix + u.pathname + u.search + u.hash);
+        continue;
+      }
+
+      // D) 最后兜底：直连路径包装
+      map.set(
+        full,
+        `${origin}/${u.protocol}//${u.host}${u.pathname}${u.search}${u.hash}`,
+      );
     }
 
-    // D) 最后兜底：直连路径包装
-    map.set(full, `${origin}/${u.protocol}//${u.host}${u.pathname}${u.search}${u.hash}`);
-  }
+    let out = text;
+    for (const [from, to] of map.entries()) out = out.split(from).join(to);
+    return out;
+  },
+  pickAllowOrigin(request, env) {
+    const reqOrigin = request.headers.get("Origin") || "";
+    const allow = String(env.CORS_ALLOW_ORIGIN || "").trim();
 
-  let out = text;
-  for (const [from, to] of map.entries()) out = out.split(from).join(to);
-  return out;
-},
-pickAllowOrigin(request, env) {
-  const reqOrigin = request.headers.get("Origin") || "";
-  const allow = String(env.CORS_ALLOW_ORIGIN || "").trim();
+    if (!reqOrigin) return "*";
+    if (!allow) return reqOrigin; // 默认回显请求源
+    if (allow === "*") return "*";
 
-  if (!reqOrigin) return "*";
-  if (!allow) return reqOrigin;      // 默认回显请求源
-  if (allow === "*") return "*";
-
-  const set = new Set(allow.split(",").map(s => s.trim()).filter(Boolean));
-  return set.has(reqOrigin) ? reqOrigin : "null";
-},
-renderCors(request, env) {
-  const ao = this.pickAllowOrigin(request, env);
-  const headers = {
-    "Access-Control-Allow-Origin": ao,
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "*"
-  };
-  if (ao !== "*") headers["Vary"] = "Origin";
-  return new Response(null, { headers });
-}
+    const set = new Set(
+      allow
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
+    return set.has(reqOrigin) ? reqOrigin : "null";
+  },
+  renderCors(request, env) {
+    const ao = this.pickAllowOrigin(request, env);
+    const headers = {
+      "Access-Control-Allow-Origin": ao,
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "*",
+    };
+    if (ao !== "*") headers["Vary"] = "Origin";
+    return new Response(null, { headers });
+  },
 };
 const UI = {
   renderAdmin() {
@@ -1530,13 +1931,11 @@ body.has-bg #bgLayer, body.has-bg #bgOverlay{display:block}
     min-width:0;
     max-width:calc(100vw - 120px); /* 给右侧按钮留空间 */
   }
-
   #nodeCount,
   .right-actions{
     flex:0 0 auto;
   }
 }
-
 #toggleAllVisBtn{
   display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;
   background:var(--brand-soft);border-color:#cfe0ff;color:#1e40af;
@@ -1547,16 +1946,13 @@ body.has-bg #bgLayer, body.has-bg #bgOverlay{display:block}
 .state-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 8px}
 .state-dot.off{background:#9ca3af}
 .state-dot.on{background:#3b82f6}
-
 .batchbar{display:none;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:10px;border:1px dashed var(--line);border-radius:12px}
 .batchbar input,.batchbar button{height:36px;border:1px solid var(--inborder);background:var(--inbg);color:var(--intext);border-radius:10px;padding:0 10px;font-size:13px}
 .batchbar button{cursor:pointer}
-
 .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 @media(max-width:1500px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:960px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:720px){.grid{grid-template-columns:1fr}}
-
 .page-hint{
   margin-top:18px;
   text-align:center;
@@ -1565,12 +1961,13 @@ body.has-bg #bgLayer, body.has-bg #bgOverlay{display:block}
   opacity:.75;
   user-select:none;
 }
-
-.card{
+/* 卡片拖拽状态 */
 .card[draggable="true"]{ cursor:grab; }
 .card.dragging{ opacity:.55; }
 .card.drag-over{ outline:2px dashed #60a5fa; outline-offset:-2px; }
 
+/* 卡片主体 */
+.card{
   border:1px solid var(--card-line);
   border-radius:10px;
   padding:10px 10px 8px;
@@ -1579,46 +1976,119 @@ body.has-bg #bgLayer, body.has-bg #bgOverlay{display:block}
   background:linear-gradient(180deg,var(--card-bg) 0%,var(--card-bg2) 100%);
   transition:all .18s ease;
 }
-
 .card:hover{
   border-color:color-mix(in oklab, var(--card-line) 70%, #93c5fd 30%);
   box-shadow:0 6px 18px rgba(37,99,235,.12);
   transform:translateY(-1px);
 }
 
-.row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.left-head{display:flex;align-items:flex-start;gap:8px}
-.selbox{margin-top:4px}
-.selbox input{width:16px;height:16px;cursor:pointer}
-.name{margin:0;font-size:var(--density-name-size);line-height:1;font-weight:800;color:var(--card-text)}
-.badges{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
-.badge{font-size:12px;line-height:20px;height:20px;padding:0 8px;border-radius:999px;font-weight:700}
-.b-green{background:#dcfce7;color:#15803d}
-.b-blue{background:#dbeafe;color:#1d4ed8}
-.b-orange{background:#fef3c7;color:#b45309}
-.b-gray{background:#eef2ff;color:#475569}
-.b-note{background:#ede9fe;color:#5b21b6}
-.b-mode-normal{background:#e0f2fe;color:#0369a1}
-.b-mode-split{background:#f5d0fe;color:#7e22ce}
-
-.status{
-  margin-top:6px;
+/* 卡片头布局 */
+.row{
   display:flex;
-  gap:6px;
-  align-items:center;
-  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-  font-size:12.5px;
-  font-weight:500;
-  color: color-mix(in srgb, var(--card-text) 88%, #000 12%);
-  line-height:1.35;
-  letter-spacing:0.1px;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:8px;
+  min-width:0;
 }
-.dot{width:8px;height:8px;border-radius:50%}
-.dot.unknown{background:#94a3b8}
-.dot.online{background:#10b981}
-.dot.offline{background:#ef4444}
+.left-wrap{
+  min-width:0;
+  flex:1 1 auto;
+  overflow:hidden;
+}
+.left-head{
+  display:flex;
+  align-items:flex-start;
+  gap:8px;
+  min-width:0;
+  flex:1 1 auto;
+}
+.selbox{ margin-top:4px; flex:0 0 auto; }
+.selbox input{ width:16px; height:16px; cursor:pointer; }
 
-.actions{display:flex;gap:4px}.actions .icon-btn{padding:6px}
+.info{
+  min-width:0;
+  flex:1 1 auto;
+}
+
+/* 节点名（防止长名称撑爆） */
+.name{
+  margin:0;
+  font-size:var(--density-name-size);
+  line-height:1.15;
+  font-weight:800;
+  color:var(--card-text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  max-width:100%;
+}
+
+/* /path 小字 */
+.path-tip{
+  margin-top:2px;
+  font-size:12px;
+  color:var(--muted);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  max-width:100%;
+}
+
+/* 右上角按钮 */
+.actions{
+  display:flex;
+  gap:4px;
+  flex:0 0 auto;
+  margin-left:8px;
+}
+.actions .icon-btn{ padding:6px; }
+
+/* 标签行 */
+.badges{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:6px;
+}
+.badge{
+  display:inline-flex;
+  align-items:center;
+  height:18px;
+  padding:0 8px;
+  border-radius:999px;
+  font-size:11px;
+  line-height:18px;
+  font-weight:700;
+  white-space:nowrap;
+}
+
+/* 徽章配色 */
+.b-mode-normal{ background:#dbeafe; color:#1d4ed8; }
+.b-green{  background:#dcfce7; color:#166534; }
+.b-blue{   background:#e0f2fe; color:#075985; }
+.b-orange{ background:#ffedd5; color:#9a3412; }
+.b-gray{   background:#e5e7eb; color:#374151; }
+.b-note{   background:#ede9fe; color:#5b21b6; }
+
+/* 状态行 */
+.status{
+  margin-top:8px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:12px;
+  color:var(--card-muted);
+}
+.dot{
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  display:inline-block;
+  flex:0 0 7px;
+}
+.dot.online{  background:#16a34a; }
+.dot.offline{ background:#ef4444; }
+.dot.unknown{ background:#94a3b8; }
 .line{margin-top:10px;display:grid;grid-template-columns:56px minmax(0,1fr) 24px 24px 24px;gap:6px;align-items:start}
 .label{
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
@@ -1780,24 +2250,6 @@ body.has-bg #bgLayer, body.has-bg #bgOverlay{display:block}
   appearance:textfield;
   -moz-appearance:textfield;
 }
-.mode-row{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:8px;
-  margin:8px 0;
-}
-.mode-btn{
-  height:36px;
-  border:1px solid var(--inborder);
-  background:var(--inbg);
-  border-radius:10px;
-  cursor:pointer;
-}
-.mode-btn.active{
-  background:#3b82f6;
-  color:#fff;
-  border-color:#3b82f6;
-}
 .disclaimer{
   width: min(1100px, calc(100% - 24px));
   margin: 16px auto 12px;   /* auto = 水平居中 */
@@ -1903,7 +2355,7 @@ body.has-bg #bgLayer, body.has-bg #bgOverlay{display:block}
 
     <div class="controls">
       <button id="tagFilterBtn" class="glass" onclick="App.openTagPicker()">标签：全部</button>
-<input id="searchInput" class="full-sm glass" placeholder="搜索节点名称、备注、部署模式..." oninput="App.filter(this.value)">
+<input id="searchInput" class="full-sm glass" placeholder="搜索节点名称、备注..." oninput="App.filter(this.value)">
       <button id="toggleAllVisBtn" class="glass" onclick="App.toggleAllVisibility()"><span class="state-dot off"></span>显示全部地址</button>
       <button id="btnCheckSel" class="glass" onclick="App.checkSelectedStatus()">检测选中</button>
       <button id="btnCheckAll" class="glass" onclick="App.checkAllStatus()">检测全部</button>
@@ -1927,26 +2379,18 @@ body.has-bg #bgLayer, body.has-bg #bgOverlay{display:block}
 
   <div id="editor" class="modal glass">
 <h3 id="editorTitle">新增节点</h3>
-
-<div class="field-title"><span class="req">*</span> 名称</div>
-<input id="inName" placeholder="请输入唯一英文名称（a-z0-9_-，1~32）">
-
+<div class="field-title"><span class="req">*</span> 请求路径（英文）</div>
+<input id="inName" placeholder="请输入唯一英文路径（a-z0-9_-，1~32）">
+<div class="field-title">显示名称（可中文）</div>
+<input id="inDisplayName" placeholder="自定义">
 <div class="field-title">标签</div>
 <div class="tagbar">
   <input id="inTag" list="tagSuggestions" placeholder="标签（如 公费服 / 公益服 / 白名单 / 等）">
 </div>
 <datalist id="tagSuggestions"></datalist>
-
 <input id="inNote" placeholder="备注（如 保号规则 / 等）">
-
 <div class="field-title"><span class="req">*</span> 目标地址</div>
 <input id="inTarget" placeholder="请输入 http(s) 地址">
-
-<div class="field-title">部署模式</div>
-<div class="mode-row">
-  <button type="button" id="modeNormal" class="mode-btn" onclick="App.setMode('normal')">统一</button>
-  <button type="button" id="modeSplit" class="mode-btn" onclick="App.setMode('split')">分离</button>
-</div>
 <input id="inSec" placeholder="密钥路径（可选，不能含 / ? #）">
 
     <div class="btns">
@@ -2156,14 +2600,6 @@ async init(prefetchedList = null){
   mountFabToControls();
   this.bindBgRangePreview();
 },
-currentMode: "normal",
-setMode(mode){
-  this.currentMode = (mode === "split" ? "split" : "normal");
-  $('#modeNormal')?.classList.toggle('active', this.currentMode === 'normal');
-  $('#modeSplit')?.classList.toggle('active', this.currentMode === 'split');
-  const box = $('#splitBox');
-  if (box) box.style.display = (this.currentMode === 'split') ? 'block' : 'none';
-},
 openTagSuggest(){
   const inp = $('#inTag');
   if(!inp) return;
@@ -2357,30 +2793,28 @@ updateTagSuggestions(){
 
   dl.innerHTML = tags.map(t => '<option value="'+this.escapeHtml(t)+'"></option>').join('');
 },
-  getFiltered(){
-    const txt = (this.filterText || '').toLowerCase();
-    return this.nodes.filter(n=>{
-      const tag = (n.tag||'').trim();
-      const okTag = this.selectedTags.size===0 || this.selectedTags.has(tag);
-const modeLabel = (n.mode === 'split') ? '分离' : '统一';
-const modeEn = (n.mode === 'split') ? 'split' : 'normal';
-const okText = !txt
-  || n.name.toLowerCase().includes(txt)
-  || (n.note||'').toLowerCase().includes(txt)
-  || modeLabel.includes(txt)
-  || modeEn.includes(txt);
-      return okTag && okText;
-    });
-  },
+  getFiltered() {
+  const txt = (this.filterText || '').toLowerCase();
+  return this.nodes.filter((n) => {
+    const tag = (n.tag || '').trim();
+    const okTag = this.selectedTags.size === 0 || this.selectedTags.has(tag);
 
+    const okText =
+      !txt ||
+      n.name.toLowerCase().includes(txt) ||
+      (n.displayName || '').toLowerCase().includes(txt) ||
+      (n.note || '').toLowerCase().includes(txt);
+
+    return okTag && okText;
+  });
+},
   filter(v){ this.filterText=v||''; this.renderList(); this.updateBatchBar(); },
   dragName: '',
 
   sortByOrder(arr) {
     return [...arr].sort((a, b) => {
       const af = !!a.fav, bf = !!b.fav;
-      if (af !== bf) return bf - af; // 收藏置顶
-
+      if (af !== bf) return af ? -1 : 1; // 收藏置顶
       const ar = Number.isFinite(a.rank) ? a.rank : 1e9;
       const br = Number.isFinite(b.rank) ? b.rank : 1e9;
       if (ar !== br) return ar - br;
@@ -2738,11 +3172,9 @@ async quickAddThirdParty(app, fullUrl){
       ? '<span class="state-dot on"></span>隐藏全部地址'
       : '<span class="state-dot off"></span>显示全部地址';
   },
-
   toggleAllVisibility() {
     const keys = this.getAllVisibilityKeys();
     if (!keys.length) return this.toast('暂无节点', 'warn');
-
     const allVisible = keys.every(k => this.visibleMap.has(k));
     if (allVisible) {
       keys.forEach(k => this.visibleMap.delete(k));
@@ -2753,12 +3185,10 @@ async quickAddThirdParty(app, fullUrl){
     }
     this.renderList();
   },
-
   renderList(){
     const arr = this.sortByOrder(this.getFiltered());
     const list = $('#list');
     list.innerHTML = '';
-
     if(!arr.length){
       const empty = document.createElement('div');
       empty.className = 'card glass';
@@ -2770,85 +3200,76 @@ async quickAddThirdParty(app, fullUrl){
       this.updateGlobalVisibilityBtn();
       return;
     }
-
     for(const n of arr){
      const normalUrl = location.origin + '/' + encodeURIComponent(n.name);
      const fullUrl = n.secret ? (normalUrl + '/' + encodeURIComponent(n.secret)) : normalUrl;
       const kTarget = n.name + ':target';
       const kProxyVis = n.name + ':proxyVis';
       const kProxyExp = n.name + ':proxyExp';
-
       const showTarget = this.visibleMap.has(kTarget);
       const showProxy = this.visibleMap.has(kProxyVis);
       const targetExpanded = this.expandMap.has(kTarget);
       const proxyExpanded = this.expandMap.has(kProxyExp);
-
       const st = this.statusText(n.name);
-
       const card = document.createElement('div');
       card.className = 'card glass';
       this.bindCardDrag(card, n.name);
-
       const row = document.createElement('div');
       row.className = 'row';
-
       const leftWrap = document.createElement('div');
-      const leftHead = document.createElement('div');
-      leftHead.className = 'left-head';
-
-      const sel = document.createElement('label');
-      sel.className = 'selbox';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = this.selected.has(n.name);
-      cb.addEventListener('change', () => this.toggleSelect(n.name, cb.checked));
-      sel.appendChild(cb);
-
-      const info = document.createElement('div');
-      const h3 = document.createElement('h3');
-      h3.className = 'name';
-      h3.textContent = n.name;
-
-      const badges = document.createElement('div');
-      badges.className = 'badges';
-const modeVal = (n.mode === 'split') ? 'split' : 'normal';
+leftWrap.className = 'left-wrap';
+const leftHead = document.createElement('div');
+leftHead.className = 'left-head';
+const sel = document.createElement('label');
+sel.className = 'selbox';
+const cb = document.createElement('input');
+cb.type = 'checkbox';
+cb.checked = this.selected.has(n.name);
+cb.addEventListener('change', () => this.toggleSelect(n.name, cb.checked));
+sel.appendChild(cb);
+const info = document.createElement('div');
+info.className = 'info';
+const h3 = document.createElement('h3');
+h3.className = 'name';
+h3.textContent = (n.displayName || '').trim() || n.name;
+h3.title = ((n.displayName || '').trim() || n.name) + '\\n/' + n.name;
+const pathTip = document.createElement('div');
+pathTip.className = 'path-tip';
+pathTip.textContent = '/' + n.name;
+const badges = document.createElement('div');
+badges.className = 'badges';
 const bm = document.createElement('span');
-bm.className = 'badge ' + (modeVal === 'split' ? 'b-mode-split' : 'b-mode-normal');
-bm.textContent = (modeVal === 'split') ? '分离' : '统一';
+bm.className = 'badge b-mode-normal';
+bm.textContent = '反代';
 badges.appendChild(bm);
-
-      if ((n.tag || '').trim()) {
-        const b1 = document.createElement('span');
-        b1.className = 'badge ' + this.tagClass(n.tag);
-        b1.textContent = n.tag;
-        badges.appendChild(b1);
-      }
-
-      if ((n.note || '').trim()) {
-        const b2 = document.createElement('span');
-        b2.className = 'badge b-note';
-        b2.textContent = n.note;
-        badges.appendChild(b2);
-      }
-
-      const status = document.createElement('div');
-      status.className = 'status';
-      const dot = document.createElement('span');
-      dot.className = 'dot ' + st.cls;
-      const txt = document.createElement('span');
-      txt.textContent = st.txt;
-      status.appendChild(dot);
-      status.appendChild(txt);
-      status.appendChild(this.iconBtn(SVG.ping, '检测此节点', () => this.checkNode(n.name)));
-
-      info.appendChild(h3);
-      info.appendChild(badges);
-      info.appendChild(status);
-
-      leftHead.appendChild(sel);
-      leftHead.appendChild(info);
-      leftWrap.appendChild(leftHead);
-
+if ((n.tag || '').trim()) {
+  const b1 = document.createElement('span');
+  b1.className = 'badge ' + this.tagClass(n.tag);
+  b1.textContent = n.tag;
+  badges.appendChild(b1);
+}
+if ((n.note || '').trim()) {
+  const b2 = document.createElement('span');
+  b2.className = 'badge b-note';
+  b2.textContent = n.note;
+  badges.appendChild(b2);
+}
+const status = document.createElement('div');
+status.className = 'status';
+const dot = document.createElement('span');
+dot.className = 'dot ' + st.cls;
+const txt = document.createElement('span');
+txt.textContent = st.txt;
+status.appendChild(dot);
+status.appendChild(txt);
+status.appendChild(this.iconBtn(SVG.ping, '检测此节点', () => this.checkNode(n.name)));
+info.appendChild(h3);
+info.appendChild(pathTip);
+info.appendChild(badges);
+info.appendChild(status);
+leftHead.appendChild(sel);
+leftHead.appendChild(info);
+leftWrap.appendChild(leftHead);
       const actions = document.createElement('div');
 actions.className = 'actions';
 const btnFav = this.iconBtn(n.fav ? SVG.starOn : SVG.star, n.fav ? '取消收藏' : '收藏置顶', () => this.toggleFav(n.name));
@@ -3044,9 +3465,10 @@ if (appRow.childElementCount > 0) {
   },
 openEditor(name){
   this.editingOldName = '';
-  this.currentMode = 'normal';
+  this.currentMode = 'split';
   $('#editorTitle').innerText = '新增节点';
   $('#inName').value = '';
+  $('#inDisplayName').value = '';
   $('#inTag').value = '';
   $('#inNote').value = '';
   $('#inTarget').value = '';
@@ -3058,11 +3480,12 @@ openEditor(name){
       this.editingOldName = n.name;
       $('#editorTitle').innerText = '编辑节点';
       $('#inName').value = n.name || '';
+      $('#inDisplayName').value = n.displayName || '';
       $('#inTag').value = n.tag || '';
       $('#inNote').value = n.note || '';
       $('#inTarget').value = n.target || '';
       $('#inSec').value = n.secret || '';
-      this.currentMode = n.mode || 'normal';
+      this.currentMode = 'split';
     }
   }
   const tagInput = $('#inTag');
@@ -3070,37 +3493,47 @@ openEditor(name){
     tagInput.addEventListener('focus', () => this.openTagSuggest());
     tagInput.dataset.autoSuggestBound = '1';
   }
-  this.setMode(this.currentMode);
   this.openModal('editor');
 },
+
 async save(){
   const name = ($('#inName').value || '').trim();
+  const displayName = ($('#inDisplayName').value || '').trim();
   const tag = ($('#inTag').value || '').trim();
   const note = ($('#inNote').value || '').trim();
   const target = ($('#inTarget').value || '').trim();
   const secret = ($('#inSec').value || '').trim();
-  if(!name || !target) return this.toast('名称和目标地址必填','warn');
+
+  if(!name || !target) return this.toast('请求路径和目标地址必填','warn');
 
   const lower = name.toLowerCase();
   const existed = this.nodes.some(x => String(x.name || '').toLowerCase() === lower);
   if (!this.editingOldName && existed) {
-    return this.toast('名称重复：该节点已存在，请换一个名称', 'warn');
+    return this.toast('请求路径重复：该节点已存在，请换一个路径', 'warn');
   }
   if (this.editingOldName && this.editingOldName.toLowerCase() !== lower && existed) {
-    return this.toast('名称重复：该节点已存在，请换一个名称', 'warn');
+    return this.toast('请求路径重复：该节点已存在，请换一个路径', 'warn');
   }
-  const mode = this.currentMode || 'normal';
+
+  // 关键：编辑时把原 rank 带回去，避免保存后掉到列表最后
+  const editingNode = this.editingOldName
+  ? this.nodes.find(x => String(x.name || '').toLowerCase() === String(this.editingOldName).toLowerCase())
+  : null;
+const rank = Number.isFinite(Number(editingNode?.rank)) ? Number(editingNode.rank) : undefined;
+const fav = !!editingNode?.fav; // 新增：编辑时保留收藏状态
+  const mode = 'split';
   const r = await API.req({
   action:'save',
-  name, target, mode,
-  secret, tag, note,
+  name, displayName, target, mode,
+  secret, tag, note, rank, fav,   // 新增 fav
   oldName: this.editingOldName || ''
 });
   if(!r.success) return this.toast(r.error || '保存失败','error');
   if (r.failed > 0 && Array.isArray(r.errors) && r.errors[0]) {
     return this.toast('保存失败：' + r.errors[0].error, 'error');
   }
-  API.clearListCache(); // 新增：保存成功后清掉前端 list 缓存
+
+  API.clearListCache();
   this.closeAllModals();
   this.toast('保存成功','success');
   await this.refresh();
@@ -3208,20 +3641,30 @@ Gate.boot();
 </body>
 </html>`;
 
-    return new Response(html, { headers: { "Content-Type": "text/html;charset=utf-8" } });
-  }
+    return new Response(html, {
+      headers: { "Content-Type": "text/html;charset=utf-8" },
+    });
+  },
 };
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/favicon.ico") return new Response("", { status: 204 });
-    if (url.pathname === "/") return new Response(null, { status: 302, headers: { Location: "/admin" } });
+    if (url.pathname === "/favicon.ico")
+      return new Response("", { status: 204 });
+    if (url.pathname === "/")
+      return new Response(null, {
+        status: 302,
+        headers: { Location: "/admin" },
+      });
 
     let segments = [];
     try {
-      segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+      segments = url.pathname
+        .split("/")
+        .filter(Boolean)
+        .map(decodeURIComponent);
     } catch {
       return new Response("Bad Request: invalid URL encoding", { status: 400 });
     }
@@ -3235,7 +3678,9 @@ export default {
     }
     // 兼容旧短链：/{name}（admin）
     if (root && root !== "admin") {
-      const nodeName = String(root || "").trim().toLowerCase();
+      const nodeName = String(root || "")
+        .trim()
+        .toLowerCase();
 
       if (/^[a-z0-9_-]{1,32}$/i.test(nodeName)) {
         const nodeData = await Database.getNode(nodeName, env, ctx, "admin");
@@ -3251,32 +3696,44 @@ export default {
 
           if (valid) {
             let remaining = "/" + segments.slice(strip).join("/");
-if (remaining === "/" && !url.pathname.endsWith("/")) {
-  const redir = new URL(url.href);
-  redir.pathname = redir.pathname + "/";
-  return new Response(null, { status: 301, headers: { Location: redir.toString() } });
-}
-            if (url.pathname.endsWith("/") && remaining !== "/") remaining += "/";
+            if (remaining === "/" && !url.pathname.endsWith("/")) {
+              const redir = new URL(url.href);
+              redir.pathname = redir.pathname + "/";
+              return new Response(null, {
+                status: 301,
+                headers: { Location: redir.toString() },
+              });
+            }
+            if (url.pathname.endsWith("/") && remaining !== "/")
+              remaining += "/";
             if (remaining === "") remaining = "/";
-            return ProxyHandler.handle(request, nodeData, remaining, nodeName, secret, env, "admin");
+            return ProxyHandler.handle(
+              request,
+              nodeData,
+              remaining,
+              nodeName,
+              secret,
+              env,
+              "admin",
+            );
           }
           return new Response("Node Not Found", { status: 404 });
         }
       }
     }
-
-    // 直连模式：/example.com:80 或 /https://example.com:80
     const enableDirect = String(env.ENABLE_DIRECT_PROXY || "0") === "1";
     if (!enableDirect) return new Response("Node Not Found", { status: 404 });
 
     // 不要用 segments.join("/")，会破坏 https://
     let directRaw = url.pathname.slice(1);
-    try { directRaw = decodeURIComponent(directRaw); } catch {}
+    try {
+      directRaw = decodeURIComponent(directRaw);
+    } catch {}
 
-    const looksLikeHost = /^https?:\/\//i.test(directRaw) || /[.:]/.test(root || "");
+    const looksLikeHost =
+      /^https?:\/\//i.test(directRaw) || /[.:]/.test(root || "");
     if (!looksLikeHost) return new Response("Node Not Found", { status: 404 });
 
     return ProxyHandler.handleDirect(request, directRaw, env);
-  }
+  },
 };
-
